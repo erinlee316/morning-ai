@@ -1,0 +1,7 @@
+.env
+credentials.json
+token.json
+emails.jsonl
+responses.jsonl
+__pycache__/
+.DS_Store
