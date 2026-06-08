@@ -1,249 +1,208 @@
-# AI Agent Development Plan
+# Morning AI research agent
 
-**End goal:** An autonomous AI agent that explains the "black box" of an ML pipeline—how inputs led to a final decision—so non-technical users understand why a patient is at risk of a given disease.
+**Vision:** A junior-analyst-style research agent that scans mixed sources, filters noise, summarizes what matters, highlights trends, and drops everything into one structured digest — ~10 minutes to read instead of checking 20 tabs.
 
-**Near-term goal:** Build an email retrieve-and-summarize agent to learn agent patterns before adapting for medical explainability.
-
----
-
-## Why the Email Pilot Fits the End Goal
-
-| Skill you need later | What the email agent teaches |
-|----------------------|------------------------------|
-| Pull data from "your side" (not paste into chat) | Gmail/IMAP or API fetch |
-| Autonomous batch (100+ items → fast responses) | Loop over messages, structured JSON out |
-| Coded pipeline, not manual Gemini | Python script + agent loop |
-| Deploy on your Mac | Local Ollama + optional small service |
-| Synthesize opaque input → plain explanation | Summarize threads → "what matters and why" |
-
-The medical agent is the same shape: **tabular/text in → model prediction out → agent explains in human language**.
+**Today:** Gmail newsletters → score → summarize → synthesize → Streamlit.  
+**Next:** More sources, smarter ranking, public deploy via GitHub Pages, optional second agent for counterpoints.
 
 ---
 
-## Problem Statement
+## Ultimate goal
 
-- Neural networks are not clear → decisions feel hidden.
-- This causes a disconnect between people who need explanations vs. people who build the models.
-- **Agent role:** Explain health outcomes for people who need it—not replace the model, but translate it.
+One useful morning report built from **many sources**, not one inbox:
 
-**Inputs:** Tabular (and optionally text) patient data.  
-**Model output:** Risk prediction.  
-**Agent output:** Plain-language synthesis of what is happening under the hood.
+| Source (planned) | Status |
+|------------------|--------|
+| Newsletters (Gmail) | ✅ `fetch_gmail.py` |
+| GitHub trending repos | Planned |
+| arXiv (cs.AI / cs.LG) | Planned |
+| Hacker News | Planned |
+| AI subreddits | Planned |
+| X/Twitter lists, company blogs | Later |
+
+The agent should **rank by relevance and novelty**, summarize (not just forward links), and merge overlapping stories across sources. Longer term: a **second agent** (`challenge_digest`) that pushes back on conclusions and surfaces opposing viewpoints.
 
 ---
 
-## End State Architecture
+## Architecture (current)
 
-```mermaid
-flowchart LR
-  subgraph inputs
-    T[Tabular patient features]
-    M[Model prediction / risk score]
-    C[Optional clinical notes]
-  end
-  subgraph blackbox
-    ML[Trained model - Simon's repo]
-  end
-  subgraph agent
-    A[Autonomous explainer agent]
-  end
-  subgraph outputs
-    R[Risk level]
-    E[Plain-language why + what to watch]
-  end
-  T --> ML
-  ML --> M
-  T --> A
-  M --> A
-  C --> A
-  A --> E
-  ML --> R
+```text
+fetch_gmail → items.jsonl                    (bootstrap — Python, before loop)
+
+before_agent.py (hardcoded loop) → score_signal → summarize_item (high-signal only) 
+                                 → synthesize_digest → digest.jsonl
+agent.py ReAct loop:
+  orchestrator (Ollama qwen2.5:3b) → pick tool → run_tool → observation → repeat until finish
+  progress rebuilt from JSONL each turn (no items_as_blurbs step)
+
+run_tool dispatches to tools.py:
+  score_signal      → Ollama — high/low signal → signals.jsonl
+  summarize_item    → Groq (llama-3.3-70b) — summary + topics → summaries.jsonl
+  synthesize_digest → Groq — merged report → digest.jsonl
+  finish            → blocked unless digest.jsonl has a row (or no high-signal items)
+
+app.py → load_jsonl(DIGEST_FILE) → Streamlit UI (local)
+
+launchd (8:00 AM) → scripts/daily_agent.sh → agent.py
 ```
 
-**Simon / project constraints (bake in early):**
+**Two layers of LLM reasoning**
 
-- Input/output pairs in code (CSV/JSON), not one-off chat.
-- Batch: 100+ pairs → structured responses quickly.
-- Any modality later (numbers, text, mixed) via a single ingest → normalize → explain path.
-- Pilot on your machine before production commit.
-- Simon's repo: input and output already assembled; agent synthesizes between them.
+| Layer | Where | Model | Job |
+|-------|-------|-------|-----|
+| **Orchestrator** | `react_loop` in `agent.py` | Ollama `qwen2.5:3b` | Workflow — which tool, which `item_id`, when to synthesize/finish |
+| **Specialists** | `tools.py` | Ollama (score) + Groq (summarize/synthesize) | Judgment — noise filter, per-item summary, digest synthesis |
 
-**Roles:**
+Python (`run_tool`) runs tools, enforces phase guards, and returns **observations** to the orchestrator. `format_progress_state()` injects counts, unscored ids, and suggested next action each turn.
 
-- **ML model** predicts (PyTorch, optionally `torch.device("mps")` on Mac GPU).
-- **LLM agent** explains (e.g. local Ollama)—do not conflate the two.
+**Backup:** `before_agent.py` — hardcoded `for` loop (no ReAct), useful for debugging.
 
 ---
 
-## Phased Plan
+## Data files
 
-### Phase 0 — Foundations (1–2 weeks)
+| File | Contents |
+|------|----------|
+| `items.jsonl` | Raw sources (`id`, `source`, `subject`, `sender`, `date`, `url`, `body`) |
+| `signals.jsonl` | Per-item noise filter (`id`, `sender`, `high_signal`, `reason`, `trend_hint`) |
+| `summaries.jsonl` | Per-item analyst output (`id`, `sender`, `summary`, `topics`) |
+| `digest.jsonl` | Morning report (`title`, `report`, `themes`, `source_count`) — last line = current |
 
-**Goal:** One script you can run that always does the same thing.
+Shared helper: `load_jsonl()` in `tools.py` (used by `agent.py`, `app.py`, `synthesize_digest`).
 
-1. **Agent skeleton** (extend `agent.py`):
-   - System prompt (`system_prompt`)
-   - Tool functions (even if fake at first)
-   - Simple **ReAct-style loop**: think → call tool → observe → answer
-
-2. **Structured output**
-   - Force JSON schema, e.g. `{ "summary", "action_items", "urgency" }` for email
-   - Later: `{ "risk_plain", "top_factors", "confidence_note" }` for medical
-
-3. **Local stack**
-   - **Ollama** for the explainer LLM
-   - **`torch.device("mps")`** when running Simon's PyTorch model locally (inference only)
-
-4. **Environment**
-   - Secrets in `.env` (e.g. `GMAIL_PASSWORD`) — never commit
-   - `requirements.txt` + README with a single run command
-
-**Exit criterion:** `python agent.py --batch emails.jsonl` prints one JSON line per email.
+New fetchers should use the same item shape and distinct `item_id` prefixes (`gmail_…`, `hn_…`, `arxiv_…`).
 
 ---
 
-### Phase 1 — Email Agent (Learning Pilot, 2–4 weeks)
+## `agent.py` — ReAct pieces
 
-**Goal:** Autonomous email agent on your Mac.
+| Function | Role |
+|----------|------|
+| `progress_sets()` | Rebuild scored / high-signal / unscored / needs-summary from JSONL |
+| `format_progress_state()` | Human-readable snapshot + suggested next action for orchestrator |
+| `resolve_item_id()` | Explicit `item_id` from LLM, or auto-pick first allowed id |
+| `run_tool(action, tool_args)` | Dispatch + phase guards → `tools.py` |
+| `react_loop()` | Thought → action → observation loop (`MAX_STEPS = 40`) |
+| `main()` | `clear_daily_files()` → `fetch_gmail()` → `react_loop()` |
 
-| Step | What to build |
-|------|----------------|
-| 1.1 Retrieve | IMAP or Gmail API: list N messages, fetch body + metadata |
-| 1.2 Normalize | Strip HTML, chunk long threads, cap tokens |
-| 1.3 Summarize | Agent: thread summary, sender intent, deadlines, suggested reply |
-| 1.4 Batch | Read `emails.jsonl` or fetch last 100; write `summaries.jsonl` |
-| 1.5 Speed | Start sequential; add parallelism only if needed; cache where useful |
+**Orchestrator actions:** `score_signal`, `summarize_item`, `synthesize_digest`, `finish`
 
-**Optional tools for the agent:**
+**`tool_args`:** `{}` auto-picks next id from progress; or `{"item_id": "gmail_..."}`.
 
-- `search_emails(query, limit)`
-- `get_email(id)`
-- `summarize_thread(ids)`
+**Workflow rules (prompt + Python guards):**
 
-**Autonomous UX mode (daily digest):**
-
-- Build a small local UI (Streamlit is fine) so the agent can run end-to-end without manual chat.
-- Default workflow: fetch today's INBOX emails (`q="newer_than:1d"`), summarize, and render a readable digest.
-- Keep the email agent read-only (summarize + prioritize only), no auto-replies.
-- Reuse the same backend pipeline: fetch -> normalize -> summarize -> validate -> display/write JSONL.
-- Add a one-click run plus optional schedule (e.g., every morning) after the manual run is stable.
-
-**Exit criterion:** 100 emails → 100 JSON summaries in one run, no manual chat.
-
-This mirrors Simon's pipeline: **100 I/O pairs in → synthesized text out**.
+- Score **all** items before summarizing
+- Summarize every **high-signal** item only
+- `synthesize_digest` only after all high-signal items summarized
+- `finish` only when `digest.jsonl` has a row (or inbox had no high-signal items)
 
 ---
 
-### Phase 2 — Generic I/O Agent (Bridge to Medical, 1–2 weeks)
+## `tools.py` — specialists
 
-**Goal:** Agent does not care if the row is an email or a patient.
+| Function | Role |
+|----------|------|
+| `groq_chat()` | Groq API for summarize + synthesize (`GROQ_API_KEY` in `.env`) |
+| `score_signal()` | Ollama JSON filter → append `signals.jsonl` |
+| `summarize_item()` | Groq summary + topics → append `summaries.jsonl` |
+| `synthesize_digest()` | Groq merged digest → append `digest.jsonl` |
+| `clean_text()` / `text_rejection_reason()` | Strip template junk; reject placeholder summaries |
 
-**Single ingest format:**
+Prompts use **required keys + concrete JSON example** (not `<...>` placeholders).
 
-```json
-{
-  "id": "patient_042",
-  "inputs": { "age": 67, "bp": 140, "notes": "..." },
-  "model_output": { "risk": 0.73, "label": "high" }
-}
+---
+
+## Phase status
+
+### Done
+
+- [x] `fetch_gmail` → `items.jsonl`
+- [x] `score_signal`, `summarize_item`, `synthesize_digest` in `tools.py`
+- [x] Groq for summarize/synthesize; Ollama for score + orchestrator
+- [x] ReAct loop with progress block (no `items_as_blurbs`)
+- [x] Phase guards + `finish` digest check
+- [x] `app.py` — latest digest, title, report, themes
+- [x] Daily schedule — `scripts/daily_agent.sh` + launchd plist
+- [x] End-to-end run verified (9 items → 1 high-signal → digest → Streamlit)
+
+### Next — more sources
+
+- [ ] `fetch_hn.py`, `fetch_arxiv.py`, `fetch_github.py`, `fetch_reddit.py` → same `items.jsonl` shape
+- [ ] Source weighting + novelty (seen topics across days)
+- [ ] Merge duplicate stories across sources in synthesize step
+
+### Next — second agent
+
+- [ ] `challenge_digest` — counterarguments, missing angles, bias check
+- [ ] Optional section in UI or separate `challenges.jsonl`
+
+### Deferred — UI
+
+- [ ] Per-source breakdown in digest (which sources contributed)
+- [ ] Richer Streamlit sidebar (per-item summaries)
+- [ ] Source list + open in Gmail (API id ≠ web link — awkward)
+
+---
+
+## Deployment & sharing (planned)
+
+**Split producer and consumer:**
+
+```text
+[Private]  Mac cron or GitHub Actions     [Public]  GitHub Pages
+           agent.py + secrets                  static site reads digest.json
+           Gmail, Groq, Ollama (local)         no keys, no inbox
+                    │
+                    └── export digest.json → commit to repo (e.g. docs/)
 ```
 
-**Prompt template:** "Given inputs and model_output, explain for a non-technical reader…"
+| Piece | Where it runs | Public? |
+|-------|---------------|---------|
+| Agent (`agent.py`) | Mac (launchd) or GitHub Actions | No — needs secrets |
+| Ollama scoring | Local Mac only today | Not on Vercel/Pages |
+| Groq | API key in `.env` / GitHub Secrets | Key never exposed to readers |
+| Digest UI | GitHub Pages or Streamlit Cloud | Yes — anyone with link (if repo/site is public) |
 
-**Batch runner** on Simon's pairs when available (same code as email batch, different schema).
+**GitHub Pages flow (target):**
 
-**Exit criterion:** Drop in any JSONL with `inputs` + `model_output` → get explanations.
+1. Daily job produces digest; export last row to `docs/digest.json` (or similar).
+2. Commit + push to repo.
+3. GitHub Pages serves a small static page that fetches `digest.json` and renders title, report, themes.
+4. Share URL — readers see the **finished report only**, not raw emails or API keys.
 
----
+**Notes:**
 
-### Phase 3 — Medical Explainability Pilot (with Simon's Repo)
-
-**Goal:** Pilot before full commit.
-
-1. **Wire Simon's repo**
-   - Load model on `mps` if on Mac
-   - Run inference OR use precomputed `model_output` from his pairs
-   - Do not retrain in the agent—**explain only**
-
-2. **Explanation quality**
-   - Map features to plain language (feature dictionary from Simon)
-   - Optional: SHAP/LIME/attention weights as *extra context* for the LLM, not the only explanation
-   - Always state: "This is a model estimate, not a diagnosis"
-
-3. **Autonomy**
-   - CLI: `python explain.py --pairs data/pairs.jsonl --out explanations.jsonl`
-   - No human in the loop per row
-
-4. **Interface for non-technical users** (later)
-   - Simple local web UI or Streamlit: one patient row → risk + explanation
-   - Keep backend identical to the batch script
-
-**Exit criterion:** Simon reviews 20–50 explanations; iterate on prompt + feature glossary.
+- Public repo → digest JSON is public. Use private repo + access controls only if you need restricted readers.
+- Before sharing widely, review digest content (summaries of *your* newsletters).
+- Cloud agent likely needs **Groq-only** (drop Ollama) if moved off Mac.
+- Streamlit Community Cloud is an alternative reader; still needs digest hosted at a URL or in repo.
 
 ---
 
-### Phase 4 — Hardening (After Pilot Works)
+## Run (local)
 
-- Auth, audit logs, PHI handling if using real patient data
-- Latency targets for 100+ rows
-- Evaluation rubric (accuracy, clarity, no hallucinated features)
-- Deployment beyond laptop (Docker, internal server) if required
+```bash
+# Produce digest (manual)
+python agent.py
 
----
+# View digest
+streamlit run app.py
 
-## Target Codebase Layout
-
-```
-agent/
-  core/
-    loop.py          # agent loop
-    llm.py           # Ollama client
-    schemas.py       # Pydantic input/output
-  tools/
-    email.py         # Phase 1
-    medical.py       # Phase 3 - load pairs, call model
-  runners/
-    batch.py         # 100+ JSONL in/out
-  prompts/
-    email.txt
-    medical_explain.txt
+# Test scheduled script
+"/Users/erinlee/Agentic AI/scripts/daily_agent.sh"
+tail "/Users/erinlee/Agentic AI/logs/agent.log"
 ```
 
-Email and medical share **`batch.py` + `loop.py`**; only tools and prompts change.
+**Step budget:** ~`inbox_items + high_signal_items + 2` minimum; `MAX_STEPS = 40` allows orchestrator retries.
 
 ---
 
-## This Week (Concrete Tasks)
+## Change launchd time
 
-1. Fill `agent_instructions` with role + JSON output format for email summaries.
-2. Add a **tool stub**: `fetch_recent_emails(n)` returning fake data, then real IMAP.
-3. Replace hardcoded demo user message with **batch mode** reading one JSON file.
-4. Document: `ollama pull qwen2.5:3b` and run command in README.
-5. Ask Simon for: sample **5–10** input/output pairs + which fields are allowed in explanations.
+Edit `Hour` / `Minute` in `scripts/com.erinlee.research-agent.plist`, then:
 
----
-
-## Risks to Watch
-
-| Risk | Mitigation |
-|------|------------|
-| LLM invents medical reasons | Ground explanations only on provided features + model output; cite feature names |
-| "Autonomous" = unsafe actions | Read-only email; medical agent read-only explain, no prescribing |
-| Slow on 100+ rows | Smaller model for draft, batch JSON, avoid re-fetching bodies |
-| Confusing ML vs agent | Document: **Model scores → Agent narrates** |
-
----
-
-## Recommended Order
-
-1. Deploy/play locally (Ollama + Python agent loop) ← **current step**
-2. Email agent with batch JSONL
-3. Generic I/O batch agent
-4. Plug in Simon's repo + `mps` inference + explainability prompts
-5. Simple UI for non-technical users
-
----
-
-## Verdict: Is Email-First a Good Plan?
-
-**Yes.** It teaches **retrieve → normalize → agent loop → structured batch output → local deploy**—the same skills Simon needs—without HIPAA and full model integration on week one.
+```bash
+launchctl unload ~/Library/LaunchAgents/com.erinlee.research-agent.plist
+cp "/Users/erinlee/Agentic AI/scripts/com.erinlee.research-agent.plist" ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.erinlee.research-agent.plist
+```
