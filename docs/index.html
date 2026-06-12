@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Morning AI — Robotics Morning Scan</title>
+  <meta name="description" content="A daily robotics and embodied-AI scan from Hacker News, arXiv, and GitHub — built by a small team of agents.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+  <div class="site-wrap">
+    <header class="masthead">
+      <div class="content">
+        <div class="masthead-meta mono">
+          <span id="masthead-date"></span>
+          <span class="masthead-issue" id="masthead-issue">No. — · Single Copy</span>
+          <span class="masthead-live">● Live</span>
+        </div>
+        <h1 class="masthead-title display">The Morning AI</h1>
+        <p class="masthead-tagline">"Robotics news, papers, and repos — picked so you don't have to live in 20 tabs."</p>
+        <nav class="tabs mono" aria-label="Main">
+          <a href="#report" data-tab="report" class="tab active">Today's Report</a>
+          <a href="#team" data-tab="team" class="tab">The Newsroom</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="panel-report" class="content panel"></main>
+    <main id="panel-team" class="content panel" hidden></main>
+
+    <footer class="site-footer">
+      <div class="content mono">
+        <span>© Morning AI · built by one human and five agents</span>
+        <span id="footer-issue">vol. 1</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="js/app.js" defer></script>
+</body>
+</html>

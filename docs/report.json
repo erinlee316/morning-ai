@@ -1,0 +1,20 @@
+{
+  "title": "Morning Robotics Scan",
+  "report": "## Pok\u00e9mon Go Scans Trained the Navigation Tech for Military Drones\n### The Breakthrough\nPok\u00e9mon Go players unknowingly helped train a camera-based navigation model through environmental scans, which is now being used to develop a Visual Positioning System (VPS) for military drones. The VPS works by matching camera footage against a 3D model of the world, allowing robots to locate themselves even when GPS signals are unavailable.\n### The Caveats\nThe article raises concerns about informed consent from users who provided the 30 billion environmental scans, but does not provide clear evidence that users were explicitly told their data would be used for military applications.\n\n## VLGA: Vision-Language-Geometry-Action Models for Autonomous Driving\n### The Breakthrough\nResearchers introduced VLGA, a vision-language-geometry-action model for autonomous driving that outperforms existing vision-language-action models by incorporating geometry as a fourth modality. The model was tested on the nuScenes and Bench2Drive datasets and achieved state-of-the-art results.\n### The Caveats\nThe paper does not discuss how the model generalizes to unseen environments or weather conditions.\n\n## Waymo Premier\n### The Breakthrough\nWaymo has introduced a new invite-only membership program called Waymo Premier, aimed at its top riders who rely on the service most. The membership costs $29.99 per month and is initially available to select riders in San Francisco, Los Angeles, and Phoenix.\n### The Caveats\nThe announcement does not mention how riders are selected for the invite-only membership program.\n\n## FACTR 2: Learning External Force Sensing for Commodity Robot Arms Improves Policy Learning\n### The Breakthrough\nResearchers introduced FACTR 2, a method for learning external force sensing on commodity robot arms, which improves policy learning for contact-rich manipulation tasks without requiring dedicated force sensors.\n### The Caveats\nThe post does not compare the performance of FIRST to policies that use actual dedicated force sensors.\n\n## DashClaw\n### The Breakthrough\nThe DashClaw repository provides a governance runtime for AI agents, allowing users to intercept actions, enforce policies, and produce audit-ready decision trails.\n### The Caveats\nThe repository appears to focus on the governance of AI agents, but it does not show how the system handles edge cases or unexpected agent behavior.\n\n## docker-ros\n### The Breakthrough\nThe ika-rwth-aachen GitHub repository provides a Docker-ROS tool for automatically building minimal container images of ROS applications, supporting both development and deployment environments.\n### The Caveats\nThe provided information does not include any comparative analysis or benchmarks of docker-ros against other similar tools.\n\n### Priority\nThe Pok\u00e9mon Go Scans Trained the Navigation Tech for Military Drones story is the best starting point today because it highlights how data from a popular game can be used to develop a Visual Positioning System for military drones, which has significant implications for robotics and embodied AI.\n### One action\nExplore the potential applications of Visual Positioning Systems in robotics and embodied AI, such as in environments where GPS is unreliable.",
+  "themes": [
+    "gps-denied navigation",
+    "autonomous driving",
+    "ai governance",
+    "robotics"
+  ],
+  "source_count": 6,
+  "section_urls": [
+    "https://dronexl.co/2026/06/09/pokemon-go-scans-niantic-vantor-military-drone-navigation/",
+    "https://arxiv.org/abs/2606.12396",
+    "https://waymo.com/blog/2026/06/waymo-premier/",
+    "https://arxiv.org/abs/2606.12406",
+    "https://github.com/ucsandman/DashClaw",
+    "https://github.com/ika-rwth-aachen/docker-ros"
+  ],
+  "generated_at": "2026-06-11T20:13:41.884280+00:00"
+}
