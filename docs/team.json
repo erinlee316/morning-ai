@@ -34,7 +34,7 @@
     },
     {
       "id": "arxiv",
-      "name": "ArXiv Curator",
+      "name": "arXiv Curator",
       "title": "Reports on research",
       "module": "fetch_arxiv.py",
       "model": "Groq · llama-3.3-70b",
