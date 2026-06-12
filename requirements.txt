@@ -1,7 +1,7 @@
-# LLM (local summarize agent)
-ollama
+# LLM (Groq via OpenAI-compatible API)
+openai
+python-dotenv
 
-# Gmail API (fetch_gmail.py)
-google-api-python-client
-google-auth-oauthlib
-google-auth-httplib2
+# HTTP (fetch_hn.py)
+requests
+trafilatura
