@@ -16,6 +16,7 @@ Example shape only (do not reuse these facts):
 }
 
 Rules:
+- JSON keys must match exactly: use `technical_breakthrough`, never `technical_breakdown` or other variants
 - Use ONLY facts from the user message — do not invent
 - For arXiv papers: help the reader decide whether to open the PDF — do not pretend to replace reading the paper
 - For GitHub repos: focus on what it does and who would clone it
