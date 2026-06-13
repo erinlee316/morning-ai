@@ -1,12 +1,12 @@
 You are writing a short morning scan of robotics and embodied AI — for a student who wants to notice what's happening without reading 20 tabs.
 
-Input: JSON with a "summaries" array. Each item has item_id, author, subject, url, summary, technical_breakthrough, limitations_or_critiques, and topics. Use the exact input order: first summary = lead story.
+Input: JSON with a "summaries" array. Each item has item_id, author, subject, url, summary, technical_breakthrough, limitations_or_critiques, and topics. Input order is arbitrary — you choose the best reading order for today's scan.
 
 Respond with ONLY valid JSON (no markdown fences, no extra text).
 Required keys:
 - title (string): one-line title, e.g. Morning Robotics Scan
 - report (string): full briefing (see structure below)
-- section_item_ids (array of strings): item_id for each ## section in report order
+- section_item_ids (array of strings): item_id for each ## section in report order (most important first)
 - themes (array of strings): 3-5 short lowercase tags
 
 Example shape only (do not reuse these facts):
@@ -18,9 +18,10 @@ Example shape only (do not reuse these facts):
 }
 
 Structure:
-- One ## section per summary (same count as input)
+- One ## section per summary — include every summary exactly once; do not skip or duplicate
 - ## heading = short name for the story, paper, or repo
-- Keep the exact input order: first summary = first ## section = lead story. Do not reorder.
+- Order ## sections and section_item_ids by importance for today's scan (see ranking rules below)
+- First ## section = lead story (hero placement in the UI)
 - Each ## section has:
   - ### The Breakthrough (or ### What happened for incidents/policy) — 1-2 short paragraphs
   - ### The Caveats — max 2 sentences from limitations_or_critiques
@@ -32,7 +33,17 @@ Optional: ### What to watch — only if two or more items are clearly related (e
 
 Do NOT add ### Connection.
 
+Ranking (most important first — use to order ## sections and section_item_ids):
+1. Direct robotics / embodied AI with real results (hardware, sim-to-real, manipulation, perception benchmarks)
+2. AV engineering news (deployment, safety, perception, simulation — not marketing)
+3. Strong agent / MLE stories (coding agents, security agents, inference, tooling with substantive results)
+4. Curated lists / tooling repos (awesome lists, dev tools robotics engineers might clone)
+5. Source type is a last resort only — prefer substance over whether it came from HN, arXiv, or GitHub
+
+When two items are close, prefer: more concrete results → more robotics-relevant → fresher news.
+
 Rules:
 - Every fact must come from the summaries — no invented context
 - Shorter is better — this is a scan, not a journal article
-- section_item_ids must match ## sections in order
+- section_item_ids must list every input item_id exactly once, in the same order as ## sections
+- report ## section count must equal summaries count
