@@ -1,5 +1,4 @@
-# ReAct agent: thought → action → observation loop
-# Bootstrap: fetch sources → write_items → react_loop → finish
+"""Daily research agent: fetch sources → score → summarize → synthesize report."""
 
 import json
 
@@ -15,7 +14,7 @@ from tools import (
     groq_chat,
     load_jsonl,
     write_items,
-    items_by_id,
+    items_by_item_id,
     GROQ_KEY_ORCHESTRATOR,
     ITEMS_FILE,
     SUMMARIES_FILE,
@@ -23,8 +22,12 @@ from tools import (
     REPORT_FILE,
 )
 
+# Pipeline: fetch all sources -> write items.jsonl -> ReAct loop -> finish
+
+# --- Config ---
+
 MAX_STEPS = 40
-MAX_HISTORY_TURNS = 6  # short term memory -> recent llm response/observation convos kept for recall
+MAX_HISTORY_TURNS = 6  # short-term memory: recent assistant/observation turns kept for recall
 
 ORCHESTRATOR_SYSTEM_PROMPT = load_prompt("build_message.txt")
 ORCHESTRATOR_USER_PROMPT = (
@@ -34,7 +37,8 @@ ORCHESTRATOR_USER_PROMPT = (
 
 
 
-# --- JSONL I/O ---
+# --- JSONL reset ---
+# Clear desk output files before a new daily run (items.jsonl is overwritten by fetch).
 
 def clear_daily_files():
     """Wipe yesterday's summaries, signals, and report JSONL files before a new daily run."""
@@ -42,7 +46,7 @@ def clear_daily_files():
         open(path, 'w', encoding='utf-8').close()
 
 
-def signals_by_id():
+def signals_by_item_id():
     """Read signals.jsonl -> dict {item_id: signal row}. Last row wins if duplicated."""
     signals = {}
     for signal in load_jsonl(SIGNALS_FILE):
@@ -63,6 +67,7 @@ def summarized_item_ids():
 
 
 # --- Progress ---
+# progress_status: work queues from JSONL. progress_summary: short text for the orchestrator.
 
 def progress_status():
     """Find scored, high-signal, unscored, and pending-summary item_id sets from JSONL.
@@ -71,9 +76,9 @@ def progress_status():
         *_ids -> id groups (all, scored, high-signal)
         *_id_list -> what's left to do next
     """
-    items = items_by_id()
+    items = items_by_item_id()
     all_ids = set(items.keys())
-    signals = signals_by_id()
+    signals = signals_by_item_id()
     already_summarized_ids = summarized_item_ids()
 
     scored_ids = {
@@ -97,8 +102,6 @@ def progress_status():
 
 
 
-# replaces long chat history — agent reads what's left from JSONL files
-# long-term progress -> rebuild every call
 def progress_summary():
     """Short status text for the LLM each orchestrator turn ("3 left to score...")."""
     status = progress_status()
@@ -134,6 +137,7 @@ def progress_summary():
 
 
 # --- ReAct helpers ---
+# build_messages + record_turn: orchestrator memory. resolve_item_id: auto-pick next item_id.
 
 def build_messages(turn_history):
     """Assemble system + user + recent ReAct turns for the next Groq call.
@@ -158,7 +162,6 @@ def record_turn(turn_history, llm_response, observation):
         del turn_history[:-MAX_HISTORY_TURNS] # everything except last 6 turns
 
 
-
 def resolve_item_id(tool_args, allowed_id_list, empty_error):
     """LLM item_id if valid, else first allowed id (index 0). Returns (None, error) if list empty."""
     if not allowed_id_list:
@@ -173,6 +176,7 @@ def resolve_item_id(tool_args, allowed_id_list, empty_error):
 
 
 # --- Tool dispatch ---
+# run_tool: map orchestrator action -> tools.py desk functions.
 
 def run_tool(action, tool_args):
     """Match a ReAct action to toolkit -> return an observation string (None on finish is ok)."""
@@ -181,7 +185,7 @@ def run_tool(action, tool_args):
         # only label high signal and reason why for sources in items.jsonl
         # keep note of progress of how many scored before moving on
         case "score_signal":
-            items = items_by_id()
+            items = items_by_item_id()
             status = progress_status()
             item_id, error = resolve_item_id(tool_args, status["unscored_id_list"], "Error: all items already scored")
 
@@ -202,7 +206,7 @@ def run_tool(action, tool_args):
             if status["unscored_id_list"]:
                 return f"Error: cannot summarize — score all items first. Unscored ids: {status['unscored_id_list']}"
 
-            items = items_by_id()
+            items = items_by_item_id()
             item_id, error = resolve_item_id(tool_args, status["pending_summary_id_list"], "Error: no high-signal items need summarizing")
             
             if error:
@@ -240,6 +244,9 @@ def run_tool(action, tool_args):
         case _:
             return f"Unknown action: {action}"
 
+
+# --- ReAct loop ---
+# react_loop: thought -> action -> run_tool -> observation until finish or MAX_STEPS.
 
 def react_loop():
     """Run the thought → action → observation loop until finish or MAX_STEPS."""
@@ -286,7 +293,8 @@ def react_loop():
 
 
 
-# --- Bootstrap ---
+# --- Fetch ---
+# fetch_all_items: run all fetchers. main: fetch -> write items.jsonl -> react_loop.
 
 def fetch_all_items():
     """Run all source fetchers and return a merged item list."""
@@ -309,6 +317,8 @@ def fetch_all_items():
 
     return items_list
 
+
+# --- CLI ---
 
 def main():
     """Fetch all sources, write items.jsonl, then run the report pipeline."""
