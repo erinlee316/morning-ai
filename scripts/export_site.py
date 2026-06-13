@@ -4,11 +4,15 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+# --- Config ---
+
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_JSONL = ROOT / "report.jsonl"
 OUT = ROOT / "docs" / "report.json"
 REQUIRED = ("title", "report", "themes", "section_urls")
 
+
+# --- Export ---
 
 def main():
     if not REPORT_JSONL.exists():
