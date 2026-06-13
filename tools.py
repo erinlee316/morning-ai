@@ -225,6 +225,10 @@ def summarize_item(item_id, author, subject, body, source="hackernews", url=""):
     except json.JSONDecodeError:
         return f"Skipped {author}: invalid JSON"
 
+    # Analyst sometimes returns technical_breakdown instead of technical_breakthrough.
+    if not clean_text(analyst_parsed.get("technical_breakthrough") or ""):
+        analyst_parsed["technical_breakthrough"] = analyst_parsed.get("technical_breakdown") or ""
+
     summary_text_fields = {}
     for field_name, parsed, key, min_chars in (
         ("summary", analyst_parsed, "summary", 80),
