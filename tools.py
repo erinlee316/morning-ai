@@ -11,7 +11,8 @@ from content_filters import (
     clean_tags,
     marketing_filter_reason,
     report_reason,
-    summary_field_reason,
+    invalid_text_reason,
+    SUMMARY_PLACEHOLDER_PHRASES,
     tags_reason,
 )
 
@@ -33,9 +34,6 @@ GROQ_KEY_ARXIV = "GROQ_API_KEY2"
 GROQ_KEY_GITHUB = "GROQ_API_KEY3"
 GROQ_KEY_DESK = "GROQ_API_KEY4"  # scorer, analyst, reviewer, editor
 GROQ_KEY_ORCHESTRATOR = "GROQ_API_KEY5"
-GROQ_KEY_ANALYST = GROQ_KEY_DESK
-GROQ_KEY_REVIEWER = GROQ_KEY_DESK
-GROQ_KEY_SCORER = GROQ_KEY_DESK
 
 ANALYST_PROMPT = load_prompt("analyst.txt")
 REVIEWER_PROMPT = load_prompt("reviewer.txt")
@@ -99,7 +97,7 @@ def latest_signal_row(item_id):
 # --- Groq ---
 # groq_chat: JSON-mode completions. parse_llm_json: strip fences. pick_item_ids: fetch-time pick.
 
-def groq_chat(messages, api_key_env=GROQ_KEY_ANALYST):
+def groq_chat(messages, api_key_env=GROQ_KEY_DESK):
     """Call Groq chat completions in JSON mode -> return the assistant message content string in JSON."""
     api_key = os.environ.get(api_key_env)
     if not api_key:
@@ -168,7 +166,7 @@ def score_signal(item_id, author, subject, body, source="hackernews", url=""):
         llm_response = groq_chat([
             {"role": "system", "content": SCORE_SIGNAL_PROMPT},
             {"role": "user", "content": item_json},
-        ], api_key_env=GROQ_KEY_SCORER)
+        ], api_key_env=GROQ_KEY_DESK)
         parsed = parse_llm_json(llm_response)
         high_signal = parsed.get("high_signal")
         reason = parsed.get("reason")
@@ -207,7 +205,7 @@ def summarize_item(item_id, author, subject, body, source="hackernews", url=""):
         analyst_response = groq_chat([
             {"role": "system", "content": ANALYST_PROMPT},
             {"role": "user", "content": item_json},
-        ], api_key_env=GROQ_KEY_ANALYST)
+        ], api_key_env=GROQ_KEY_DESK)
     except Exception as err:
         return f"Skipped {author}: analyst Groq error ({err})"
 
@@ -215,7 +213,7 @@ def summarize_item(item_id, author, subject, body, source="hackernews", url=""):
         reviewer_response = groq_chat([
             {"role": "system", "content": REVIEWER_PROMPT},
             {"role": "user", "content": item_json},
-        ], api_key_env=GROQ_KEY_REVIEWER)
+        ], api_key_env=GROQ_KEY_DESK)
     except Exception as err:
         return f"Skipped {author}: reviewer Groq error ({err})"
 
@@ -232,7 +230,12 @@ def summarize_item(item_id, author, subject, body, source="hackernews", url=""):
         ("limitations_or_critiques", reviewer_parsed, "limitations_or_critiques", 40),
     ):
         field_text = clean_text(parsed.get(key) or "")
-        drop_reason = summary_field_reason(field_text, field=field_name, min_chars=min_chars)
+        drop_reason = invalid_text_reason(
+            field_text,
+            field=field_name,
+            placeholder_phrases=SUMMARY_PLACEHOLDER_PHRASES,
+            min_chars=min_chars,
+        )
         if drop_reason:
             return f"Skipped {author}: {drop_reason}"
         summary_text_fields[field_name] = field_text
