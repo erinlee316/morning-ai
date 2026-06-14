@@ -31,7 +31,7 @@ MAX_PICK_OPTIONS = 20
 MAX_PICKS = 4
 MAX_BODY_CHARS = 8000
 MAX_GROQ_BODY_CHARS = 1200
-USER_AGENT = "AgenticAI-ResearchBot/1.0 (+https://github.com/)"
+USER_AGENT = "AgenticAI-ResearchBot/1.0 (+https://github.com/erinlee316/morning-ai)"
 
 ARXIV_SYSTEM_PROMPT = load_prompt("arxiv_system.txt")
 
@@ -119,19 +119,12 @@ def latest_announcement_day(now=None):
     return day
 
 
-def announced_on_day(entry, announcement_day):
-    """True if this paper was announced on the given day (UTC)."""
-    announced_at = entry_announced_at(entry)
-    if announced_at is None:
-        return False
-    return announced_at.date() == announcement_day
-
-
 def filter_by_announcement_day(feed_entries, announcement_day):
     """Keep parsed entries whose announcement date matches announcement_day."""
     batch_entries = []
     for entry in feed_entries:
-        if not announced_on_day(entry, announcement_day):
+        announced_at = entry_announced_at(entry)
+        if announced_at is None or announced_at.date() != announcement_day:
             continue
         if not entry_arxiv_id(entry):
             continue
@@ -176,8 +169,7 @@ def paper_to_item(entry, body=None):
 
 
 # --- Fetch ---
-# fetch_feed_entries: HTTP query + XML parse.
-# resolve_latest_batch + fetch_latest_batch_entries: filter to the latest announcement day.
+# fetch_feed_entries: HTTP query + XML parse; resolve_latest_batch filters to the latest announcement day.
 
 def fetch_feed_entries():
     """Return all Atom entries from one API query (uncapped by announcement day)."""
@@ -220,8 +212,11 @@ def resolve_latest_batch(feed_entries):
     return batch_entries, announcement_day
 
 
-def fetch_latest_batch_entries():
-    """Query arXiv and return Atom <entry> elements from the latest announcement batch."""
+# --- Groq pick ---
+# pick_options -> groq_options -> pick_item_ids -> entries_by_item_id / bodies_by_item_id lookups.
+
+def fetch_selected_papers():
+    """Select papers from the latest announcement batch with Groq -> return item dicts for items.jsonl."""
     feed_entries = fetch_feed_entries()
     if not feed_entries:
         return []
@@ -231,16 +226,6 @@ def fetch_latest_batch_entries():
         f"arXiv: {len(batch_entries)} papers from {announcement_day} batch "
         f"(announced ~{ARXIV_ANNOUNCE_HOUR_UTC}:00 UTC, from {MAX_FEED_ENTRIES} fetched)"
     )
-    return batch_entries
-
-
-
-# --- Groq pick ---
-# pick_options -> groq_options -> pick_item_ids -> entries_by_item_id / bodies_by_item_id lookups.
-
-def fetch_selected_papers():
-    """Select papers from the latest announcement batch with Groq -> return item dicts for items.jsonl."""
-    batch_entries = fetch_latest_batch_entries()
     if not batch_entries:
         return []
 
