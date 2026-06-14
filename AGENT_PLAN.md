@@ -48,13 +48,16 @@ agent.py main():
   react_loop()                 # ReAct until finish
 
 fetch_hn.py:
-  HN API → 24h filter → Groq curation (≤6) → item dicts
+  front page + Algolia topic search → rank → marketing filter → fill top 20 → Groq pick (≤4) → item dicts
 
 fetch_arxiv.py:
-  arXiv API → today's batch → Groq curation (3–4) → item dicts
+  arXiv API → weekday batch → pick_options → Groq pick (≤4) → item dicts
 
 fetch_github.py:
-  GitHub search → Groq curation (≤4) → item dicts
+  GitHub search → pick_options → Groq pick (≤3) → item dicts
+
+content_filters.py:
+  marketing_filter_reason (fetch + score_signal) · desk output validation (summarize / synthesize)
 
 agent.py ReAct loop:
   orchestrator (Groq llama-3.3-70b) → pick tool → run_tool → observation → repeat until finish
@@ -76,9 +79,9 @@ launchd (8:00 AM) → scripts/daily_agent.sh → agent.py → export_site.py
 | Layer | Where | Model | Job |
 |-------|-------|-------|-----|
 | **Orchestrator** | `react_loop` in `agent.py` | Groq `llama-3.3-70b` (`GROQ_API_KEY5`) | Workflow — which tool, which `item_id`, when to synthesize/finish |
-| **Specialists** | `tools.py` + `fetch_*.py` | Groq `llama-3.3-70b` | Judgment — source curation, noise filter, per-item summary, report synthesis |
+| **Specialists** | `fetch_*.py`, `content_filters.py`, `tools.py` | Groq `llama-3.3-70b` | Fetch-time pick, marketing/noise filter, per-item summary, report synthesis |
 
-Python (`run_tool`) runs tools, enforces phase guards, and returns **observations** to the orchestrator. `format_progress_state()` injects counts, unscored ids, and suggested next action each turn.
+Python (`run_tool`) runs tools, enforces phase guards, and returns **observations** to the orchestrator. `progress_summary()` injects counts, unscored ids, and suggested next action each turn.
 
 **Prompts:** text files in `prompts/` loaded via `load_prompt()`:
 
@@ -98,9 +101,9 @@ Python (`run_tool`) runs tools, enforces phase guards, and returns **observation
 
 | Env var | Role |
 |---------|------|
-| `GROQ_API_KEY1` | HN Curator (`fetch_hn.py`) |
-| `GROQ_API_KEY2` | arXiv Curator (`fetch_arxiv.py`) |
-| `GROQ_API_KEY3` | GitHub Curator (`fetch_github.py`) |
+| `GROQ_API_KEY1` | HN fetch pick (`fetch_hn.py`) |
+| `GROQ_API_KEY2` | arXiv fetch pick (`fetch_arxiv.py`) |
+| `GROQ_API_KEY3` | GitHub fetch pick (`fetch_github.py`) |
 | `GROQ_API_KEY4` | Research Desk — scorer, analyst, reviewer, editor (`tools.py`) |
 | `GROQ_API_KEY5` | Orchestrator (`agent.py`) |
 
@@ -118,9 +121,19 @@ Optional: `GITHUB_TOKEN` in `.env` for higher GitHub API rate limits.
 | `report.jsonl` | Morning report (`title`, `report`, `themes`, `source_count`, `section_urls`, `generated_at`) — last line = current |
 | `docs/report.json` | Exported public snapshot (no raw items) |
 
-Shared helper: `load_jsonl()` in `tools.py` (used by `agent.py`, `synthesize_report`).
+Shared helpers: `load_jsonl()`, `items_by_item_id()` in `tools.py`.
 
-**Item id conventions:** HN uses numeric string ids; arXiv uses `arxiv_<id>`; GitHub uses `github_<owner_repo>`.
+**JSONL indexing style:** Build `{item_id: row}` dicts and id sets with explicit for-loops in `items_by_item_id()` and `progress_status()`. One-liner dict/set comprehensions are fine for in-memory transforms (e.g. `summary_rows_by_item_id` in `synthesize_report`). Keep fetch pipeline steps as named functions; do not flatten loops for consistency.
+
+**Item id conventions:** `item_id` is always a **string** — the pipeline key used in JSONL, Groq prompts, and `*_by_item_id` lookups. Native source keys are only for URLs/API calls.
+
+| Source | Native key | `item_id` in JSONL |
+|--------|------------|-------------------|
+| HN | `story["id"]` | same, as string (e.g. `"48450142"`) |
+| GitHub | `full_name` | `github_{normalized}` via `repo_item_id()` (e.g. `"github_org_manip_stack"`) |
+| arXiv | bare paper id | `arxiv_{paper_id}` (e.g. `"arxiv_2401.12345"`) |
+
+Fetch-time pick (`pick_item_ids()` in `tools.py`): each fetcher builds `pick_options` → `groq_options` → Groq returns `selected_ids` (JSON array of strings).
 
 ---
 
@@ -129,8 +142,8 @@ Shared helper: `load_jsonl()` in `tools.py` (used by `agent.py`, `synthesize_rep
 | Function | Role |
 |----------|------|
 | `fetch_all_items()` | Merge HN + arXiv + GitHub fetchers |
-| `progress_sets()` | Rebuild scored / high-signal / unscored / needs-summary from JSONL |
-| `format_progress_state()` | Human-readable snapshot + suggested next action for orchestrator |
+| `progress_status()` | Rebuild scored / high-signal / unscored / pending-summary from JSONL |
+| `progress_summary()` | Human-readable snapshot + suggested next action for orchestrator |
 | `resolve_item_id()` | Explicit `item_id` from LLM, or auto-pick first allowed id |
 | `run_tool(action, tool_args)` | Dispatch + phase guards → `tools.py` |
 | `react_loop()` | Thought → action → observation loop (`MAX_STEPS = 40`) |
@@ -155,29 +168,34 @@ Shared helper: `load_jsonl()` in `tools.py` (used by `agent.py`, `synthesize_rep
 
 | Step | What |
 |------|------|
-| Fetch | Top story ids from HN Firebase API |
-| Filter | Story type, posted within last 24h |
-| Trim | Top 20 by HN score before Groq |
-| Curate | Groq picks up to **6** stories (`hacker_news_system.txt`) |
-| Body | HN text, or trafilatura article fetch, or title fallback |
+| Discover | Front page (`fetch_front_page_stories`, up to 100 ids) **+** Algolia topic search (`HN_TOPICS`, last 24h) |
+| Dedupe | Merge by story id in `fetch_recent_stories()` |
+| Rank | `rank_stories_for_pick()` — `story_rank_score` (title/text/url), then HN score (`content_filters.py`) |
+| Pre-filter | Walk ranked list: fetch body → `marketing_filter_reason` → keep until `MAX_PICK_OPTIONS` (20) survivors |
+| Pick | Groq picks up to `MAX_PICKS` (**4**) from survivors — **stricter** than desk scoring (`hacker_news_system.txt`; robotics-first, empty list OK) |
+| Body | HN text, or trafilatura article fetch, or title fallback (`story_body`) |
+
+**Fetch prompt vs desk score:** `hacker_news_system.txt` is narrow (robotics/embodied/AV engineering only; agents as tie-breaker). `score_signal_system.txt` stays broader for arXiv/GitHub and secondary HN coverage.
 
 ### `fetch_arxiv.py`
 
 | Step | What |
 |------|------|
-| Fetch | Latest daily batch (18:00 UTC cadence) across cs.RO/CV/AI/LG/CL/SY/MA |
-| Curate | Groq picks **3–4** papers (`arxiv_system.txt`; `min_pick` / `max_pick`) |
-| Body | Title + abstract |
+| Fetch | Latest weekday announcement batch (18:00 UTC cadence) across cs.RO/CV/AI/LG/CL/SY/MA |
+| Trim | Newest `MAX_PICK_OPTIONS` (20) from batch |
+| Pick | Groq picks up to `MAX_PICKS` (**4**) papers (`arxiv_system.txt`; `max_pick`) |
+| Body | Title + categories + abstract |
 
 ### `fetch_github.py`
 
 | Step | What |
 |------|------|
-| Search | Topic queries, pushed in last 3 days, stars 10–5000 |
-| Curate | Groq picks up to **4** repos (`github_system.txt`) |
-| Body | README excerpt |
+| Search | Topic queries, pushed in last 3 days, stars 10–5000; dedupe via `repos_by_full_name` |
+| Trim | Top `MAX_PICK_OPTIONS` (20) by `updated_at` |
+| Pick | Groq picks up to `MAX_PICKS` (**3**) repos (`github_system.txt`) |
+| Body | Description, topics, README excerpt |
 
-**Structural limitation (not LLM laziness):** GitHub search-by-topic surfaces *recently pushed repos*, not *what matters today*. Groq curation can't fix a weak candidate pool — it picks the best of noisy trending repos. **Future:** switch to **releases** on established repos (Foxglove, ROS packages, etc.) instead of new-repo discovery.
+**Structural limitation (not LLM laziness):** GitHub search-by-topic surfaces *recently pushed repos*, not *what matters today*. Groq pick can't fix a weak candidate pool — it picks the best of noisy trending repos. **Future:** switch to **releases** on established repos (Foxglove, ROS packages, etc.) instead of new-repo discovery.
 
 Standalone: `python fetch_hn.py` (or arxiv/github modules) can write `items.jsonl` without running the full agent.
 
@@ -190,9 +208,10 @@ Standalone: `python fetch_hn.py` (or arxiv/github modules) can write `items.json
 - [x] Multi-source fetch — HN, arXiv, GitHub in `fetch_all_items()`
 - [x] `agent.py` bootstrap: fetch + write items + ReAct loop
 - [x] `score_signal`, `summarize_item`, `synthesize_report` in `tools.py`
-- [x] All LLM calls on Groq `llama-3.3-70b` (orchestrator, curators, desk)
+- [x] All LLM calls on Groq `llama-3.3-70b` (orchestrator, fetch pickers, desk)
 - [x] ReAct loop with progress block + phase guards
-- [x] Robotics / embodied AI focus in curator and synthesis prompts
+- [x] Robotics / embodied AI focus in fetch and synthesis prompts
+- [x] `content_filters.py` — marketing filter + desk output validation
 - [x] Daily schedule — `scripts/daily_agent.sh` + launchd plist
 - [x] Prompts externalized under `prompts/`
 - [x] Gmail pipeline removed
@@ -200,7 +219,7 @@ Standalone: `python fetch_hn.py` (or arxiv/github modules) can write `items.json
 
 ### Editorial pipeline (current)
 
-- Fetch caps: **≤6 HN + 3–4 arXiv + ≤4 GitHub** (~13 candidates)
+- Fetch caps: **≤4 HN + ≤4 arXiv + ≤3 GitHub** (~11 candidates; `MAX_PICKS` per source)
 - Score all → summarize **all high-signal** → synthesize → export to `docs/report.json`
 - Report length follows how many items pass the noise filter (often ~8–10)
 
