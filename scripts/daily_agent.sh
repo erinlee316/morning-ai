@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-PROJECT="/Users/erinlee/Agentic AI"
+PROJECT="/Users/erinlee/agentic_ai"
 PYTHON="/opt/anaconda3/bin/python"
 LOG_DIR="$PROJECT/logs"
 
