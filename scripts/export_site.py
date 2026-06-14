@@ -1,5 +1,13 @@
-"""Export last report.jsonl row → docs/report.json (public-safe fields only)."""
+"""Export last report.jsonl row → docs/report.json (public-safe fields only).
 
+Fails loudly (non-zero exit) on a bad run so a scheduled CI job goes red instead
+of silently deploying an empty or stale page:
+  - missing/empty report.jsonl or missing required keys -> always an error
+  - report not generated today (UTC) -> an error only in CI (RUNNING_IN_CI),
+    so local re-exports of an older report aren't blocked during testing.
+"""
+
+import os
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,23 +19,50 @@ REPORT_JSONL = ROOT / "report.jsonl"
 OUT = ROOT / "docs" / "report.json"
 REQUIRED = ("title", "report", "themes", "section_urls")
 
+# GitHub Actions (and most CI) set CI=true; gate the staleness check on it.
+RUNNING_IN_CI = os.environ.get("CI", "").lower() == "true"
+
+
+# --- Freshness ---
+
+def fail_if_stale(generated_at):
+    """In CI, exit non-zero unless the report was generated today (UTC)."""
+    if not RUNNING_IN_CI:
+        return
+    if not generated_at:
+        raise SystemExit("Report has no generated_at timestamp — cannot confirm freshness.")
+    try:
+        generated = datetime.fromisoformat(generated_at)
+    except ValueError:
+        raise SystemExit(f"Report generated_at is unparseable: {generated_at!r}")
+    if generated.tzinfo is None:
+        generated = generated.replace(tzinfo=timezone.utc)
+
+    generated_day = generated.astimezone(timezone.utc).date()
+    today = datetime.now(timezone.utc).date()
+    if generated_day != today:
+        raise SystemExit(
+            f"Report is stale: generated {generated_day} (UTC), expected {today}. "
+            "Pipeline likely failed to produce a fresh report — not deploying."
+        )
+
 
 # --- Export ---
 
 def main():
     if not REPORT_JSONL.exists():
-        print("No report.jsonl — skipping export")
-        return
+        raise SystemExit("No report.jsonl — pipeline produced no report. Not deploying.")
 
     lines = REPORT_JSONL.read_text(encoding="utf-8").strip().splitlines()
     if not lines:
-        print("No report.jsonl rows — skipping export")
-        return
+        raise SystemExit("report.jsonl is empty — pipeline produced no report. Not deploying.")
 
     row = json.loads(lines[-1])
     missing = [key for key in REQUIRED if key not in row]
     if missing:
         raise SystemExit(f"Last report missing keys: {missing}")
+
+    fail_if_stale(row.get("generated_at"))
 
     out = {
         "title": row["title"],
