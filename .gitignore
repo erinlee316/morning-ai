@@ -11,9 +11,6 @@ items.jsonl
 summaries.jsonl
 signals.jsonl
 report.jsonl
-challenges.jsonl
-responses.jsonl
-emails.jsonl
 
 # --- Logs ---
 logs/
