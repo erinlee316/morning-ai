@@ -1,9 +1,10 @@
 """Shared JSONL I/O, Groq calls, and desk pipeline tools (score, summarize, synthesize)."""
 
 import os
+import time
 import json
 from datetime import datetime, timezone
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 from dotenv import load_dotenv
 from prompts import load_prompt
 from content_filters import (
@@ -29,11 +30,19 @@ SUMMARIES_FILE = "summaries.jsonl"
 SIGNALS_FILE = "signals.jsonl"
 REPORT_FILE = "report.jsonl"
 
-GROQ_KEY_HN = "GROQ_API_KEY1"
-GROQ_KEY_ARXIV = "GROQ_API_KEY2"
-GROQ_KEY_GITHUB = "GROQ_API_KEY3"
-GROQ_KEY_DESK = "GROQ_API_KEY4"  # scorer, analyst, reviewer, editor
-GROQ_KEY_ORCHESTRATOR = "GROQ_API_KEY5"
+# Single Groq account for every stage. Spreading load across multiple accounts to dodge
+# rate limits risks bans; instead, groq_chat rides out the per-minute (TPM) limit with
+# backoff + pacing below. Stage aliases are kept so existing callers/imports keep working.
+GROQ_API_KEY = "GROQ_API_KEY1"
+GROQ_KEY_HN = GROQ_KEY_ARXIV = GROQ_KEY_GITHUB = GROQ_KEY_DESK = GROQ_KEY_ORCHESTRATOR = GROQ_API_KEY
+
+# Retry / pacing for the single-account strategy.
+GROQ_MAX_RETRIES = 6       # attempts per call before giving up
+GROQ_BACKOFF_BASE = 2.0    # seconds; doubles each retry (2, 4, 8, ... capped)
+GROQ_BACKOFF_CAP = 45.0    # max seconds to wait on any single retry
+GROQ_PACING_DELAY = 12.0   # seconds slept after each successful call. ~2.5k tokens/call vs ~12k TPM
+                           # free-tier limit => ~5 calls/min, so ~12s/call keeps us under it proactively
+                           # (backoff above still catches any overflow). Trades run time for ~no 429s.
 
 ANALYST_PROMPT = load_prompt("analyst.txt")
 REVIEWER_PROMPT = load_prompt("reviewer.txt")
@@ -97,8 +106,22 @@ def latest_signal_row(item_id):
 # --- Groq ---
 # groq_chat: JSON-mode completions. parse_llm_json: strip fences. pick_item_ids: fetch-time pick.
 
-def groq_chat(messages, api_key_env=GROQ_KEY_DESK):
-    """Call Groq chat completions in JSON mode -> return the assistant message content string in JSON."""
+def _retry_after_seconds(err):
+    """Pull Groq's Retry-After hint (in seconds) from a 429 response, if present."""
+    try:
+        value = err.response.headers.get("retry-after")
+        return float(value) if value else None
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def groq_chat(messages, api_key_env=GROQ_API_KEY):
+    """Call Groq chat completions in JSON mode -> return the assistant message content string in JSON.
+
+    Single-account strategy: on a 429 we wait and retry (honoring Retry-After when Groq sends
+    it, else exponential backoff), and we pace successful calls so a burst of summarize calls
+    doesn't blow the per-minute token limit. Trades run time for staying under quota.
+    """
     api_key = os.environ.get(api_key_env)
     if not api_key:
         raise RuntimeError(f"{api_key_env} not set (add to .env)")
@@ -108,12 +131,24 @@ def groq_chat(messages, api_key_env=GROQ_KEY_DESK):
         api_key=api_key,
     )
 
-    response = client.chat.completions.create(
-        model=GROQ_MODEL,
-        messages=messages,
-        response_format={"type": "json_object"},
-    )
-    return response.choices[0].message.content
+    delay = GROQ_BACKOFF_BASE
+    for attempt in range(1, GROQ_MAX_RETRIES + 1):
+        try:
+            response = client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=messages,
+                response_format={"type": "json_object"},
+            )
+        except RateLimitError as err:
+            if attempt == GROQ_MAX_RETRIES:
+                raise
+            wait = min(_retry_after_seconds(err) or delay, GROQ_BACKOFF_CAP)
+            print(f"  Groq rate limit (attempt {attempt}/{GROQ_MAX_RETRIES}) — waiting {wait:.0f}s")
+            time.sleep(wait)
+            delay *= 2
+            continue
+        time.sleep(GROQ_PACING_DELAY)  # pace successful calls to stay under tokens-per-minute
+        return response.choices[0].message.content
 
 
 def parse_llm_json(text):
