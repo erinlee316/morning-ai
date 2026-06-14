@@ -29,7 +29,8 @@ MAX_FEED_ENTRIES = 40
 MAX_PICK_OPTIONS = 20
 # Groq pick target (prompt-only -> not enforced in code)
 MAX_PICKS = 4
-MAX_BODY_CHARS = 8000
+# arXiv bodies are title + categories + abstract; abstracts rarely exceed ~2.5k chars
+MAX_BODY_CHARS = 3000
 MAX_GROQ_BODY_CHARS = 1200
 USER_AGENT = "AgenticAI-ResearchBot/1.0 (+https://github.com/erinlee316/morning-ai)"
 
