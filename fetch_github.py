@@ -32,7 +32,7 @@ MAX_STARS = 5000  # skip household-name megarepos (opencv, openpilot, etc.)
 MAX_BODY_CHARS = 8000
 MAX_GROQ_BODY_CHARS = 1200
 MAX_README_CHARS = 6000
-USER_AGENT = "AgenticAI-ResearchBot/1.0"
+USER_AGENT = "AgenticAI-ResearchBot/1.0 (+https://github.com/erinlee316/morning-ai)"
 
 AI_TOPICS = (
     "robotics",
@@ -54,7 +54,7 @@ GITHUB_SYSTEM_PROMPT = load_prompt("github_system.txt")
 
 
 # --- Search helpers ---
-# GitHub API headers, stable item_id, and one search query per AI topic.
+# GitHub API headers and stable item_id.
 
 def github_headers():
     """Build GitHub API headers; optional GITHUB_TOKEN raises rate limits."""
@@ -79,13 +79,6 @@ def pushed_since_date():
     """ISO date (UTC) for GitHub search pushed:> filter (last PUSHED_DAYS)."""
     pushed_since = datetime.fromtimestamp(time.time() - PUSHED_DAYS * 24 * 60 * 60, tz=timezone.utc)
     return pushed_since.strftime("%Y-%m-%d")
-
-
-def search_queries():
-    """One query per topic — GitHub search returns 0 for parenthesized OR + pushed filters."""
-    pushed = f"pushed:>{pushed_since_date()}"
-    stars = f"stars:{MIN_STARS}..{MAX_STARS}"
-    return [f"topic:{topic} {stars} {pushed}" for topic in AI_TOPICS]
 
 
 # --- Item shaping ---
@@ -153,9 +146,14 @@ def repo_to_item(repo, body=None):
 
 def search_repos():
     """Search GitHub for recently pushed AI-related repositories."""
+    # One query per topic — GitHub search returns 0 for parenthesized OR + pushed filters.
+    pushed = f"pushed:>{pushed_since_date()}"
+    stars = f"stars:{MIN_STARS}..{MAX_STARS}"
+    queries = [f"topic:{topic} {stars} {pushed}" for topic in AI_TOPICS]
+
     repos_by_full_name = {}
 
-    for query in search_queries():
+    for query in queries:
         params = {
             "q": query,
             "sort": "updated",
