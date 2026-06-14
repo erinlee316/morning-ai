@@ -20,6 +20,18 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+/** Allow only http(s) links; reject javascript:/data: and other schemes. */
+function safeUrl(url) {
+  try {
+    const parsed = new URL(url, location.href);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? parsed.href
+      : "#";
+  } catch {
+    return "#";
+  }
+}
+
 function stripTitleLink(text) {
   let cleaned = (text || "").trim();
   cleaned = cleaned.replace(TRAILING_LINK, "").trim();
@@ -109,7 +121,7 @@ function formatReport(data) {
 function extractSection(block, heading) {
   const re = new RegExp(
     `### ${heading}\\s*\\n+([\\s\\S]*?)(?=\\n### |\\n## |$)`,
-    "i"
+    "i",
   );
   const match = block.match(re);
   return match ? match[1].trim() : "";
@@ -119,7 +131,7 @@ function stripGlobalSection(body, heading) {
   return body
     .replace(
       new RegExp(`### ${heading}\\s*\\n+[\\s\\S]*?(?=\\n### |\\n## |$)`),
-      ""
+      "",
     )
     .trim();
 }
@@ -189,7 +201,7 @@ function renderLeadStory(story) {
     <article class="lead-story">
       ${renderSourceLine(story)}
       <h2 class="display">
-        <a href="${escapeHtml(story.url)}" target="_blank" rel="noreferrer">${escapeHtml(story.title)}</a>
+        <a href="${escapeHtml(safeUrl(story.url))}" target="_blank" rel="noreferrer">${escapeHtml(story.title)}</a>
       </h2>
       <p class="lead-body">${escapeHtml(story.summary)}</p>
       ${story.caveats ? `<p class="lead-caveats">${escapeHtml(story.caveats)}</p>` : ""}
@@ -202,7 +214,7 @@ function renderStoryCard(story) {
     <article class="story-card">
       ${renderSourceLine(story)}
       <h3 class="display">
-        <a href="${escapeHtml(story.url)}" target="_blank" rel="noreferrer">${escapeHtml(story.title)}</a>
+        <a href="${escapeHtml(safeUrl(story.url))}" target="_blank" rel="noreferrer">${escapeHtml(story.title)}</a>
       </h3>
       <div class="story-rule"></div>
       <p class="story-body">${escapeHtml(story.summary)}</p>
@@ -249,12 +261,10 @@ function renderEmptyReport() {
 function buildReportHTML(data, formattedMarkdown) {
   const blocks = splitStories(formattedMarkdown);
   const urls = data.section_urls || [];
-  const stories = blocks.map((block, i) =>
-    parseStory(block, urls[i] || "")
-  );
+  const stories = blocks.map((block, i) => parseStory(block, urls[i] || ""));
 
   const { whatToWatch, priority, action } = extractGlobalCallouts(
-    (data.report || "").trim()
+    (data.report || "").trim(),
   );
 
   const themes = (data.themes || [])
@@ -287,7 +297,9 @@ function buildReportHTML(data, formattedMarkdown) {
 async function loadReport() {
   const panel = document.getElementById("panel-report");
   try {
-    const res = await fetch(`report.json?t=${Date.now()}`, { cache: "no-store" });
+    const res = await fetch(`report.json?t=${Date.now()}`, {
+      cache: "no-store",
+    });
     if (!res.ok) {
       renderEmptyReport();
       return;
@@ -330,13 +342,17 @@ function renderPersonCard(person) {
         </div>
         <div class="card-role mono">${escapeHtml(person.title)}</div>
         <p class="card-bio">${escapeHtml(person.bio)}</p>
-        ${person.note ? `
+        ${
+          person.note
+            ? `
         <dl class="card-dl">
           <div>
             <dt>Note</dt>
             <dd>${escapeHtml(person.note)}</dd>
           </div>
-        </dl>` : ""}
+        </dl>`
+            : ""
+        }
       </div>
     </div>`;
 }
@@ -355,7 +371,7 @@ function renderAgentCard(agent, isBoss) {
           <li>
             <span>${escapeHtml(sub.name)}</span>
             <span class="sub-model mono">${escapeHtml(sub.model)}</span>
-          </li>`
+          </li>`,
           )
           .join("")}</ul>
       </div>`
