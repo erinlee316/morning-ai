@@ -19,7 +19,7 @@ from content_filters import (
 
 load_dotenv()
 
-# Pipeline: JSONL I/O -> Groq calls -> score / summarize / synthesize
+
 
 # --- Config ---
 
@@ -30,23 +30,25 @@ SUMMARIES_FILE = "summaries.jsonl"
 SIGNALS_FILE = "signals.jsonl"
 REPORT_FILE = "report.jsonl"
 
-# Two Groq accounts, one 70b daily pool each. The orchestrator makes a call every ReAct step
-# (the highest call volume of any role), so it runs on its own account (KEY5) to keep that
-# volume off the desk pool that scoring/summaries/synthesis draw from (KEY4). groq_chat still
-# rides out each account's per-minute (TPM) limit with backoff + pacing below. Stage aliases
-# kept so existing callers/imports keep working.
-GROQ_API_KEY = "GROQ_API_KEY4"
-GROQ_KEY_ORCHESTRATOR = "GROQ_API_KEY5"
-GROQ_KEY_HN = GROQ_KEY_ARXIV = GROQ_KEY_GITHUB = GROQ_KEY_DESK = GROQ_API_KEY
+# Shared across all three source fetchers (HN/arXiv/GitHub).
+USER_AGENT = "AgenticAI-ResearchBot/1.0 (+https://github.com/erinlee316/morning-ai)"
+MAX_GROQ_BODY_CHARS = 1200   # body chars sent per option at Groq pick time
 
-# Retry / pacing for the two-account strategy.
+GROQ_KEY_ORCHESTRATOR = "GROQ_API_KEY1"   # one call per ReAct step — highest call volume
+GROQ_KEY_SCORE = "GROQ_API_KEY2"          # one scoring call per item
+GROQ_KEY_ANALYST = "GROQ_API_KEY3"        # analyst draft per high-signal item
+GROQ_KEY_REVIEWER = "GROQ_API_KEY4"       # reviewer critique, back-to-back with the analyst
+GROQ_KEY_SYNTH = GROQ_KEY_ANALYST         # final report merge runs after summaries, so it reuses the analyst key
+GROQ_KEY_HN = GROQ_KEY_ARXIV = GROQ_KEY_GITHUB = "GROQ_API_KEY5"  # fetch picks, once each before the desk loop
+
+GROQ_API_KEY = GROQ_KEY_ORCHESTRATOR      # default key for groq_chat callers that don't specify one
+
 GROQ_MAX_RETRIES = 6       # attempts per call before giving up
 GROQ_BACKOFF_BASE = 2.0    # seconds; doubles each retry (2, 4, 8, ... capped)
 GROQ_BACKOFF_CAP = 45.0    # max seconds to wait on any single retry
-GROQ_PACING_DELAY = 4.0    # seconds slept after each successful call. Lowered from 12s now that load
-                           # is split across two accounts (more TPM headroom each). Still proactively
-                           # spaces calls; backoff above catches any 429 overflow. Watch the logs and
-                           # bump back up if "Groq rate limit" lines start showing up often.
+GROQ_PACING_DELAY = 1.5    # seconds slept after each successful call to stay under TPM; lowered
+                           # from 4.0 now that load is split across five keys. Bump back up if
+                           # "Groq rate limit" lines start showing up often
 
 ANALYST_PROMPT = load_prompt("analyst.txt")
 REVIEWER_PROMPT = load_prompt("reviewer.txt")
@@ -54,8 +56,8 @@ SCORE_SIGNAL_PROMPT = load_prompt("score_signal_system.txt")
 SYNTHESIZE_REPORT_PROMPT = load_prompt("synthesize_report.txt")
 
 
+
 # --- JSONL Input/Output ---
-# Read/write items, signals, summaries, and report rows on disk.
 
 def load_jsonl(path):
     """Load a JSONL file into a list of dicts -> return [] if the file is missing."""
@@ -108,7 +110,6 @@ def latest_signal_row(item_id):
 
 
 # --- Groq ---
-# groq_chat: JSON-mode completions. parse_llm_json: strip fences. pick_item_ids: fetch-time pick.
 
 def _retry_after_seconds(err):
     """Pull Groq's Retry-After hint (in seconds) from a 429 response, if present."""
@@ -120,11 +121,10 @@ def _retry_after_seconds(err):
 
 
 def groq_chat(messages, api_key_env=GROQ_API_KEY, model=GROQ_MODEL):
-    """Call Groq chat completions in JSON mode -> return the assistant message content string in JSON.
+    """Call Groq chat completions in JSON mode -> return the assistant message content string.
 
-    Per-account strategy: on a 429 we wait and retry (honoring Retry-After when Groq sends it,
-    else exponential backoff), and we pace successful calls so a burst of summarize calls
-    doesn't blow the per-minute token limit. Trades run time for staying under quota.
+    On a 429 we retry (honoring Retry-After when present, else exponential backoff) and pace
+    successful calls to stay under the per-minute token limit.
     """
     api_key = os.environ.get(api_key_env)
     if not api_key:
@@ -143,6 +143,7 @@ def groq_chat(messages, api_key_env=GROQ_API_KEY, model=GROQ_MODEL):
                 messages=messages,
                 response_format={"type": "json_object"},
             )
+
         except RateLimitError as err:
             if attempt == GROQ_MAX_RETRIES:
                 raise
@@ -151,9 +152,9 @@ def groq_chat(messages, api_key_env=GROQ_API_KEY, model=GROQ_MODEL):
             time.sleep(wait)
             delay *= 2
             continue
+
         except (APITimeoutError, APIConnectionError) as err:
-            # Transient network blip (TLS handshake/connect timeout) — retry with backoff so a
-            # single hiccup doesn't kill an unattended daily run. No Retry-After on these.
+            # Transient network blip — retry with backoff so one hiccup doesn't kill a daily run.
             if attempt == GROQ_MAX_RETRIES:
                 raise
             wait = min(delay, GROQ_BACKOFF_CAP)
@@ -161,11 +162,11 @@ def groq_chat(messages, api_key_env=GROQ_API_KEY, model=GROQ_MODEL):
             time.sleep(wait)
             delay *= 2
             continue
+
         except BadRequestError as err:
-            # Groq's JSON mode can reject the model's OWN output as invalid (code
-            # 'json_validate_failed') — a transient generation failure (common on the 8b) that
-            # usually clears on a re-sample. Retry those; re-raise any other 400 (a genuinely
-            # malformed request, which retrying won't fix).
+            # Groq's JSON mode sometimes rejects the model's own output ('json_validate_failed')
+            # — a transient generation failure that usually clears on re-sample. Retry only
+            # those; re-raise any other 400, which retrying won't fix.
             if getattr(err, "code", None) != "json_validate_failed" and "json_validate_failed" not in str(err):
                 raise
             if attempt == GROQ_MAX_RETRIES:
@@ -191,25 +192,27 @@ def parse_llm_json(text):
 
 
 def pick_item_ids(system_prompt, pick_options, api_key_env):
-    """Fetch-time pick: Groq picks which item_ids to keep, before they're written to items.jsonl.
+    """Fetch-time pick: Groq chooses which item_ids to keep before they're written to items.jsonl.
 
-    The fetcher has already narrowed the items to choose from — at most MAX_PICK_OPTIONS of
-    them, each with its body shortened to a MAX_GROQ_BODY_CHARS preview — so this just asks
-    Groq to choose up to max_pick. pick_options is the dict sent to the model, e.g.
-    {"max_pick": 4, "stories": [...]}. Returns selected_ids as strings.
+    pick_options is the dict sent to the model, e.g. {"max_pick": 4, "stories": [...]}.
+    Returns selected_ids as strings, or [] if Groq fails (e.g. an exhausted key) so a
+    dead key degrades to "skip this source" instead of crashing the whole run.
     """
-    llm_response = groq_chat([
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": json.dumps(pick_options)},
-    ], api_key_env=api_key_env)
-    parsed = parse_llm_json(llm_response)
+    try:
+        llm_response = groq_chat([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(pick_options)},
+        ], api_key_env=api_key_env)
+        parsed = parse_llm_json(llm_response)
+    except (json.JSONDecodeError, RuntimeError, APIError) as err:
+        print(f"  Fetch pick failed ({err}) — skipping this source")
+        return []
     selected_ids = parsed.get("selected_ids") or []
     return [str(item_id) for item_id in selected_ids]
 
 
 
-# --- Pipeline tools ---
-# score_signal, summarize_item, synthesize_report — called by the orchestrator in agent.py.
+# --- Pipeline tools (called by the orchestrator in agent.py) ---
 
 def score_signal(item_id, author, subject, body, source="hackernews", url=""):
     """Score one item with Groq, append to signals.jsonl -> returns (status_message, signal_row)."""
@@ -231,7 +234,7 @@ def score_signal(item_id, author, subject, body, source="hackernews", url=""):
         llm_response = groq_chat([
             {"role": "system", "content": SCORE_SIGNAL_PROMPT},
             {"role": "user", "content": item_json},
-        ], api_key_env=GROQ_KEY_DESK, model=GROQ_MODEL)
+        ], api_key_env=GROQ_KEY_SCORE, model=GROQ_MODEL)
         parsed = parse_llm_json(llm_response)
         high_signal = parsed.get("high_signal")
         reason = parsed.get("reason")
@@ -244,8 +247,7 @@ def score_signal(item_id, author, subject, body, source="hackernews", url=""):
             high_signal, reason = False, "Score failed: model did not return a valid reason"
 
     except (json.JSONDecodeError, RuntimeError, APIError) as err:
-        # APIError covers a transient failure that survived groq_chat's retries — degrade this
-        # one item to a failed score rather than crashing the whole run on a network outage.
+        # Degrade this one item to a failed score rather than crashing the whole run.
         high_signal, reason = False, f"Score failed: {err}"
 
     signal_row = write_signal_row(item_id, author, high_signal, reason)
@@ -268,13 +270,13 @@ def summarize_item(item_id, author, subject, body, source="hackernews", url=""):
         "source": source
     })
 
-    # Analyst drafts first; the reviewer then critiques that draft (not the raw body),
-    # so the second call ships a few hundred tokens instead of the full article again.
+    # Analyst drafts first; the reviewer critiques that draft (not the raw body), so the
+    # second call ships a few hundred tokens instead of the full article again.
     try:
         analyst_response = groq_chat([
             {"role": "system", "content": ANALYST_PROMPT},
             {"role": "user", "content": item_json},
-        ], api_key_env=GROQ_KEY_DESK)
+        ], api_key_env=GROQ_KEY_ANALYST)
     except Exception as err:
         return f"Skipped {author}: analyst Groq error ({err})"
 
@@ -286,7 +288,7 @@ def summarize_item(item_id, author, subject, body, source="hackernews", url=""):
     analyst_draft = json.dumps({
         "item_id": item_id,
         "subject": subject,
-        "source": source,  # lets the reviewer tailor its caveat to the genre (paper vs news vs Ask HN)
+        "source": source,  # lets the reviewer tailor its caveat to the genre
         "summary": analyst_parsed.get("summary") or "",
         "technical_breakthrough": analyst_parsed.get("technical_breakthrough") or "",
     })
@@ -295,7 +297,7 @@ def summarize_item(item_id, author, subject, body, source="hackernews", url=""):
         reviewer_response = groq_chat([
             {"role": "system", "content": REVIEWER_PROMPT},
             {"role": "user", "content": analyst_draft},
-        ], api_key_env=GROQ_KEY_DESK, model=GROQ_MODEL)
+        ], api_key_env=GROQ_KEY_REVIEWER, model=GROQ_MODEL)
     except Exception as err:
         return f"Skipped {author}: reviewer Groq error ({err})"
 
@@ -364,7 +366,7 @@ def synthesize_report():
         llm_response = groq_chat([
             {"role": "system", "content": SYNTHESIZE_REPORT_PROMPT},
             {"role": "user", "content": synthesize_payload},
-        ], api_key_env=GROQ_KEY_DESK)
+        ], api_key_env=GROQ_KEY_SYNTH)
     except Exception as err:
         return f"Skipped report: Groq error ({err})"
 
@@ -392,9 +394,8 @@ def synthesize_report():
 
     section_item_ids = [str(item_id or "") for item_id in section_item_ids]
     section_urls = [summary_rows_by_item_id[item_id].get("url") or "" for item_id in section_item_ids]
-    # Headings come from the source's real subject, keyed by section_item_ids — not from
-    # the item_id or whatever ## text the model wrote (it tends to echo the item_id). The
-    # site renders these, so deriving them here keeps titles correct regardless of the model.
+    # Headings come from the source's real subject (keyed by section_item_ids), not from
+    # whatever ## text the model wrote — it tends to echo the item_id.
     section_titles = [summary_rows_by_item_id[item_id].get("subject") or "" for item_id in section_item_ids]
 
     report_entry = {
