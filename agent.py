@@ -2,6 +2,7 @@
 
 import json
 
+from openai import APIError, BadRequestError
 from prompts import load_prompt
 from fetch_hn import fetch_selected_stories
 from fetch_arxiv import fetch_selected_papers
@@ -16,7 +17,7 @@ from tools import (
     write_items,
     items_by_item_id,
     GROQ_KEY_ORCHESTRATOR,
-    GROQ_MODEL_FAST,
+    GROQ_MODEL,
     ITEMS_FILE,
     SUMMARIES_FILE,
     SIGNALS_FILE,
@@ -240,12 +241,20 @@ def react_loop():
     for step in range(1, MAX_STEPS + 1):
         llm_response = ""
         try:
-            llm_response = groq_chat(build_messages(turn_history), api_key_env=GROQ_KEY_ORCHESTRATOR, model=GROQ_MODEL_FAST)
+            llm_response = groq_chat(build_messages(turn_history), api_key_env=GROQ_KEY_ORCHESTRATOR, model=GROQ_MODEL)
             parsed = parse_llm_json(llm_response)
         except json.JSONDecodeError:
             record_turn(turn_history, llm_response, "Invalid JSON. Respond with only valid JSON.")
             continue
-        except RuntimeError as err:
+        except BadRequestError:
+            # Groq rejected the 8b's own output as invalid JSON even after groq_chat re-sampled.
+            # Same class of problem as a local parse failure: skip this turn and let the loop try
+            # again rather than aborting the whole run on one bad generation.
+            record_turn(turn_history, llm_response, "Previous response was not valid JSON. Respond with only valid JSON.")
+            continue
+        except (RuntimeError, APIError) as err:
+            # APIError = a Groq failure that survived groq_chat's retries (sustained outage);
+            # stop the loop cleanly rather than crashing with a traceback on an unattended run.
             print(f"Orchestrator Groq error: {err}")
             break
 
