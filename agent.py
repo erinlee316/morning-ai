@@ -18,20 +18,16 @@ from tools import (
     items_by_item_id,
     GROQ_KEY_ORCHESTRATOR,
     GROQ_MODEL,
-    ITEMS_FILE,
     SUMMARIES_FILE,
     SIGNALS_FILE,
     REPORT_FILE,
 )
 
-# Pipeline: fetch all sources -> write items.jsonl -> ReAct loop -> finish
-
 # --- Config ---
 
 MAX_STEPS = 40
-MAX_HISTORY_TURNS = 2  # short-term memory: recent assistant/observation turns kept for recall
-                       # (authoritative state is recomputed each turn in the "Current progress"
-                       #  block, so a short window is enough — just anti-repetition context)
+MAX_HISTORY_TURNS = 2  # recent turns kept for anti-repetition; authoritative state is recomputed
+                       # each turn in the "Current progress" block, so a short window suffices
 
 ORCHESTRATOR_SYSTEM_PROMPT = load_prompt("build_message.txt")
 ORCHESTRATOR_USER_PROMPT = (
@@ -42,16 +38,15 @@ ORCHESTRATOR_USER_PROMPT = (
 
 
 # --- JSONL reset ---
-# Clear desk output files before a new daily run (items.jsonl is overwritten by fetch).
-
+# items.jsonl is overwritten by fetch, so only the desk outputs need clearing here.
 def clear_daily_files():
-    """Wipe yesterday's summaries, signals, and report JSONL files before a new daily run."""
+    """Wipe yesterday's summaries, signals, and report JSONL before a new daily run."""
     for path in (SUMMARIES_FILE, SIGNALS_FILE, REPORT_FILE):
         open(path, 'w', encoding='utf-8').close()
 
 
+
 # --- Progress ---
-# progress_status: work queues from JSONL. progress_summary: short text for the orchestrator.
 
 def progress_status():
     """Find scored, high-signal, unscored, and pending-summary item_id sets from JSONL.
@@ -129,13 +124,9 @@ def progress_summary():
 
 
 # --- ReAct helpers ---
-# build_messages + record_turn: orchestrator memory. resolve_item_id: auto-pick next item_id.
 
 def build_messages(turn_history):
-    """Assemble system + user + recent ReAct turns for the next Groq call.
-       
-    (prompt + progress + last 6 turns) before Groq.
-    """
+    """Assemble system + user + recent ReAct turns for the next Groq call."""
     progress_summary_text = progress_summary()
     messages = [
         {"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT},
@@ -168,7 +159,6 @@ def resolve_item_id(tool_args, allowed_id_list, empty_error):
 
 
 # --- Tool dispatch ---
-# run_tool: map orchestrator action -> tools.py desk functions.
 
 def run_tool(action, tool_args):
     """Match a ReAct action to toolkit -> return an observation string (None on finish is ok)."""
@@ -229,13 +219,10 @@ def run_tool(action, tool_args):
 
 
 # --- ReAct loop ---
-# react_loop: thought -> action -> run_tool -> observation until finish or MAX_STEPS.
 
 def react_loop():
     """Run the thought → action → observation loop until finish or MAX_STEPS."""
-
-    # short term memory of recent turns
-    # MAX past 6 turns -> full progress lives in JSONL + Current progress block
+    # Short-term memory; full progress lives in JSONL + the "Current progress" block.
     turn_history = []
 
     for step in range(1, MAX_STEPS + 1):
@@ -247,14 +234,13 @@ def react_loop():
             record_turn(turn_history, llm_response, "Invalid JSON. Respond with only valid JSON.")
             continue
         except BadRequestError:
-            # Groq rejected the 8b's own output as invalid JSON even after groq_chat re-sampled.
-            # Same class of problem as a local parse failure: skip this turn and let the loop try
-            # again rather than aborting the whole run on one bad generation.
+            # Groq rejected its own output as invalid JSON even after re-sampling — treat like a
+            # parse failure: skip this turn rather than aborting the run on one bad generation.
             record_turn(turn_history, llm_response, "Previous response was not valid JSON. Respond with only valid JSON.")
             continue
         except (RuntimeError, APIError) as err:
-            # APIError = a Groq failure that survived groq_chat's retries (sustained outage);
-            # stop the loop cleanly rather than crashing with a traceback on an unattended run.
+            # A Groq failure that survived groq_chat's retries (sustained outage) — stop cleanly
+            # rather than crashing with a traceback on an unattended run.
             print(f"Orchestrator Groq error: {err}")
             break
 
@@ -285,7 +271,6 @@ def react_loop():
 
 
 # --- Fetch ---
-# fetch_all_items: run all fetchers. main: fetch -> write items.jsonl -> react_loop.
 
 def fetch_all_items():
     """Run all source fetchers and return a merged item list."""
@@ -307,6 +292,7 @@ def fetch_all_items():
     items_list.extend(github_items)
 
     return items_list
+
 
 
 # --- CLI ---
