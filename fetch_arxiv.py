@@ -1,44 +1,39 @@
-"""Fetch arXiv papers from the latest announcement batch, Groq-pick, and write items.jsonl."""
+"""Fetch recent arXiv papers on two tracks (robotics + secondary), Groq-pick, and write items.jsonl."""
 
 import re
 import requests
-import xml.etree.ElementTree as ET # ArXiv papers return XML not JSON format
+import xml.etree.ElementTree as ET # arXiv returns XML, not JSON
 
 from dotenv import load_dotenv
 from prompts import load_prompt
-from datetime import datetime, timedelta, timezone
-from tools import GROQ_KEY_ARXIV, pick_item_ids, write_items
+from tools import GROQ_KEY_ARXIV, MAX_GROQ_BODY_CHARS, USER_AGENT, pick_item_ids, write_items
 
 load_dotenv()
 
-# Pipeline: API feed -> weekday batch -> items.jsonl shape -> Groq pick -> item dicts
+
 
 # --- Config ---
 
-# arXiv announces Mon–Fri in a daily batch around this hour (UTC).
-# Papers in that batch are stamped ~17:59 UTC, so we match by announcement day.
-ARXIV_ANNOUNCE_HOUR_UTC = 18
 ARXIV_API = "https://export.arxiv.org/api/query"
 # XML namespace URIs must match the feed exactly (arXiv uses http, not https).
 ATOM_NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
-ARXIV_CATEGORIES = ("cs.RO", "cs.CV", "cs.AI", "cs.LG", "cs.CL", "cs.SY", "cs.MA")
 
-# Atom entries from arXiv API (pre batch-day filter; may truncate large batches)
-MAX_FEED_ENTRIES = 40
-# newest N from batch before Groq picks
-MAX_PICK_OPTIONS = 20
-# Groq pick target (prompt-only -> not enforced in code)
-MAX_PICKS = 4
-# arXiv bodies are title + categories + abstract; abstracts rarely exceed ~2.5k chars
-MAX_BODY_CHARS = 3000
-MAX_GROQ_BODY_CHARS = 1200
-USER_AGENT = "AgenticAI-ResearchBot/1.0 (+https://github.com/erinlee316/morning-ai)"
+# Two-track fetch: cs.RO (robotics) is low-volume and gets drowned out when mixed with the
+# high-volume ML/NLP categories in one query, so we pull it on its own track with guaranteed
+# slots, then fill the rest from the secondary categories.
+ROBOTICS_CATEGORIES = ("cs.RO",)
+SECONDARY_CATEGORIES = ("cs.CV", "cs.AI", "cs.LG", "cs.CL", "cs.SY", "cs.MA")
+
+MAX_ROBOTICS_OPTIONS = 12    # guaranteed robotics slots; secondary fills the rest
+MAX_PICK_OPTIONS = 20        # total pool size before Groq picks
+MAX_PICKS = 4                # Groq pick target (prompt-only, not enforced in code)
+MAX_BODY_CHARS = 3000        # title + categories + abstract
 
 ARXIV_SYSTEM_PROMPT = load_prompt("arxiv_system.txt")
 
 
-# --- Atom entry parsing ---
-# One helper per field on an <atom:entry> (arXiv API returns XML, not JSON).
+
+# --- Atom entry parsing (arXiv API returns XML, not JSON) ---
 
 def entry_arxiv_id(entry):
     """Extract bare arXiv id (no version) from an Atom entry id URL."""
@@ -48,19 +43,6 @@ def entry_arxiv_id(entry):
         return ""
     arxiv_id = match.group(1)
     return re.sub(r"v\d+$", "", arxiv_id)
-
-
-def entry_announced_at(entry):
-    """Parse Atom published timestamp to UTC datetime, or None on failure."""
-    announced_raw = (entry.findtext("atom:published", default="", namespaces=ATOM_NS) or "").strip()
-    if not announced_raw:
-        return None
-    try:
-        if announced_raw.endswith("Z"):
-            announced_raw = announced_raw[:-1] + "+00:00"
-        return datetime.fromisoformat(announced_raw)
-    except ValueError:
-        return None
 
 
 def entry_title(entry):
@@ -96,46 +78,7 @@ def entry_authors(entry):
 
 
 
-# --- Announcement batch ---
-# Keep papers from the current weekday drop, or the prior weekday if today's batch is empty.
-
-def previous_weekday(day):
-    """Step back one calendar day, skipping Saturday and Sunday."""
-    day -= timedelta(days=1)
-    while day.weekday() >= 5:
-        day -= timedelta(days=1)
-    return day
-
-
-def latest_announcement_day(now=None):
-    """Calendar date (UTC) of the arXiv batch we expect to be current."""
-    now = now or datetime.now(timezone.utc)
-    day = now.date()
-
-    if day.weekday() >= 5:  # weekend -> Friday's batch
-        day -= timedelta(days=day.weekday() - 4)
-    elif now.hour < ARXIV_ANNOUNCE_HOUR_UTC:  # before today's drop -> previous weekday
-        day = previous_weekday(day)
-
-    return day
-
-
-def filter_by_announcement_day(feed_entries, announcement_day):
-    """Keep parsed entries whose announcement date matches announcement_day."""
-    batch_entries = []
-    for entry in feed_entries:
-        announced_at = entry_announced_at(entry)
-        if announced_at is None or announced_at.date() != announcement_day:
-            continue
-        if not entry_arxiv_id(entry):
-            continue
-        batch_entries.append(entry)
-    return batch_entries
-
-
-
 # --- Item shaping ---
-# paper_body builds Groq/desk text; paper_to_item maps to the shared items.jsonl dict.
 
 def paper_body(entry, categories=None):
     """Build a plain-text body from an Atom entry's title, categories, and abstract."""
@@ -170,16 +113,15 @@ def paper_to_item(entry, body=None):
 
 
 # --- Fetch ---
-# fetch_feed_entries: HTTP query + XML parse; resolve_latest_batch filters to the latest announcement day.
 
-def fetch_feed_entries():
-    """Return all Atom entries from one API query (uncapped by announcement day)."""
-    search_query = " OR ".join(f"cat:{cat}" for cat in ARXIV_CATEGORIES)
+def fetch_category_entries(categories, max_results):
+    """Query arXiv for the newest `max_results` papers in `categories` (OR'd) -> Atom entries."""
+    search_query = " OR ".join(f"cat:{cat}" for cat in categories)
     params = {
         "search_query": search_query,
         "sortBy": "submittedDate",
         "sortOrder": "descending",
-        "max_results": MAX_FEED_ENTRIES,
+        "max_results": max_results,
     }
 
     try:
@@ -191,48 +133,55 @@ def fetch_feed_entries():
         )
         response.raise_for_status()
     except requests.RequestException as err:
-        print(f"arXiv API error: {err}")
+        print(f"arXiv API error ({'+'.join(categories)}): {err}")
         return []
 
     root = ET.fromstring(response.text)
     return root.findall("atom:entry", ATOM_NS)
 
 
-def resolve_latest_batch(feed_entries):
-    """Pick the current announcement day and filter entries -> falling back to prior weekday if empty."""
-    announcement_day = latest_announcement_day()
-    batch_entries = filter_by_announcement_day(feed_entries, announcement_day)
+def gather_pick_options():
+    """Robotics papers as guaranteed slots, then fill with newest secondary-category papers.
 
-    # After 18:00 UTC, today's batch may not be indexed yet — use the prior weekday.
-    if not batch_entries:
-        prior_day = previous_weekday(announcement_day)
-        batch_entries = filter_by_announcement_day(feed_entries, prior_day)
-        if batch_entries:
-            announcement_day = prior_day
+    Returns (entries deduped with robotics first, robotics_count).
+    """
+    robotics_entries = fetch_category_entries(ROBOTICS_CATEGORIES, MAX_ROBOTICS_OPTIONS)
+    # Over-fetch secondary so dedupe against robotics cross-listings still leaves enough to fill.
+    secondary_entries = fetch_category_entries(SECONDARY_CATEGORIES, MAX_PICK_OPTIONS)
 
-    return batch_entries, announcement_day
+    seen = set()
+    pick_options = []
+    for entry in robotics_entries[:MAX_ROBOTICS_OPTIONS]:
+        arxiv_id = entry_arxiv_id(entry)
+        if arxiv_id and arxiv_id not in seen:
+            seen.add(arxiv_id)
+            pick_options.append(entry)
+    robotics_count = len(pick_options)
+
+    for entry in secondary_entries:
+        if len(pick_options) >= MAX_PICK_OPTIONS:
+            break
+        arxiv_id = entry_arxiv_id(entry)
+        if arxiv_id and arxiv_id not in seen:
+            seen.add(arxiv_id)
+            pick_options.append(entry)
+
+    return pick_options, robotics_count
+
 
 
 # --- Groq pick ---
-# pick_options -> groq_options -> pick_item_ids -> entries_by_item_id / bodies_by_item_id lookups.
 
 def fetch_selected_papers():
-    """Select papers from the latest announcement batch with Groq -> return item dicts for items.jsonl."""
-    feed_entries = fetch_feed_entries()
-    if not feed_entries:
+    """Two-track fetch (robotics guaranteed + secondary fill) -> Groq pick -> item dicts for items.jsonl."""
+    pick_options, robotics_count = gather_pick_options()
+    if not pick_options:
         return []
 
-    batch_entries, announcement_day = resolve_latest_batch(feed_entries)
     print(
-        f"arXiv: {len(batch_entries)} papers from {announcement_day} batch "
-        f"(announced ~{ARXIV_ANNOUNCE_HOUR_UTC}:00 UTC, from {MAX_FEED_ENTRIES} fetched)"
+        f"arXiv: {robotics_count} robotics + {len(pick_options) - robotics_count} secondary "
+        f"= {len(pick_options)} candidates to Groq"
     )
-    if not batch_entries:
-        return []
-
-    pick_options = batch_entries[:MAX_PICK_OPTIONS]
-    if len(batch_entries) > MAX_PICK_OPTIONS:
-        print(f"arXiv: sending newest {MAX_PICK_OPTIONS} of {len(batch_entries)} to Groq")
 
     bodies_by_item_id = {}
     entries_by_item_id = {}
