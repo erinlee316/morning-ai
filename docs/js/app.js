@@ -101,6 +101,7 @@ function updateMasthead(iso) {
 function formatReport(data) {
   let body = (data.report || "").trim();
   const urls = data.section_urls || [];
+  const titles = data.section_titles || [];
   const lines = [];
   let urlIdx = 0;
 
@@ -108,8 +109,10 @@ function formatReport(data) {
     const isStoryHeading = line.startsWith("## ") && !line.startsWith("###");
     if (isStoryHeading && urlIdx < urls.length) {
       const url = (urls[urlIdx] || "").trim();
+      const title = (titles[urlIdx] || "").trim();
       urlIdx += 1;
-      const heading = stripTitleLink(line.slice(3));
+      // Prefer the real source subject (section_titles); fall back to the model's ## text.
+      const heading = title || stripTitleLink(line.slice(3));
       lines.push(url ? `## [${heading}](${url})` : `## ${heading}`);
     } else {
       lines.push(line);
