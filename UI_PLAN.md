@@ -103,7 +103,7 @@ Tab links in [`docs/index.html`](docs/index.html); `showTab()` + `hashchange` in
 
 | Parsed field | Source in markdown |
 |--------------|-------------------|
-| Title + URL | `##` heading, linked via `section_urls[]` order |
+| Title + URL | `section_titles[]` (real source title) with the `##` heading as fallback, linked via `section_urls[]` order |
 | Source label | Derived from URL hostname (`Hacker News`, `arXiv`, `GitHub`, or host) |
 | Body | `### The Breakthrough` or `### What happened` |
 | Caveats | `### The Caveats` |
@@ -120,6 +120,7 @@ Tab links in [`docs/index.html`](docs/index.html); `showTab()` + `hashchange` in
   "report": "## ... markdown ...",
   "themes": ["robotics", "embodied ai"],
   "source_count": 6,
+  "section_titles": ["...", "..."],
   "section_urls": ["https://...", "..."],
   "generated_at": "2026-06-11T15:05:55.642142+00:00"
 }
@@ -179,20 +180,20 @@ Config in [`docs/team.json`](docs/team.json) — edit copy and image paths there
 | Level | ID | Display name | Module | Model | Groq key |
 |-------|-----|--------------|--------|-------|----------|
 | Human | `erin` | Erin | — | — | — |
-| Boss | `orchestrator` | Orchestrator | `agent.py` | Groq `llama-3.3-70b` | `GROQ_API_KEY5` |
-| Report | `hn` | Hacker News Curator | `fetch_hn.py` | Groq | `GROQ_API_KEY1` |
-| Report | `arxiv` | ArXiv Curator | `fetch_arxiv.py` | Groq | `GROQ_API_KEY2` |
-| Report | `github` | GitHub Curator | `fetch_github.py` | Groq | `GROQ_API_KEY3` |
-| Report | `research_desk` | Research Desk | `tools.py` | Groq (4 sub-roles) | `GROQ_API_KEY4` |
+| Boss | `orchestrator` | Orchestrator | `agent.py` | Groq `llama-3.3-70b` | `GROQ_API_KEY1` |
+| Report | `hn` | Hacker News Curator | `fetch_hn.py` | Groq | `GROQ_API_KEY5` |
+| Report | `arxiv` | ArXiv Curator | `fetch_arxiv.py` | Groq | `GROQ_API_KEY5` |
+| Report | `github` | GitHub Curator | `fetch_github.py` | Groq | `GROQ_API_KEY5` |
+| Report | `research_desk` | Research Desk | `tools.py` | Groq (4 sub-roles) | `GROQ_API_KEY2–4` |
 
 **Research Desk sub-roles** (nested in one card):
 
-| Sub-role | Tool | Model |
-|----------|------|-------|
-| Signal Scorer | `score_signal` | Groq |
-| Analyst | `summarize_item` (analyst) | Groq |
-| Reviewer | `summarize_item` (reviewer) | Groq |
-| Editor | `synthesize_report` | Groq |
+| Sub-role | Tool | Model | Groq key |
+|----------|------|-------|----------|
+| Signal Scorer | `score_signal` | Groq | `GROQ_API_KEY2` |
+| Analyst | `summarize_item` (analyst) | Groq | `GROQ_API_KEY3` |
+| Reviewer | `summarize_item` (reviewer) | Groq | `GROQ_API_KEY4` |
+| Editor | `synthesize_report` | Groq | `GROQ_API_KEY3` |
 
 **Daily schedule:** launchd **8:00 AM** (`scripts/com.erinlee.research-agent.plist`) → `daily_agent.sh` → `agent.py` → `export_site.py`.
 
@@ -251,7 +252,7 @@ Never commit `.env`, raw `items.jsonl`, or `report.jsonl`. **Do commit** `docs/r
 - [x] PNG pixel portraits for Erin + five agents
 - [x] `scripts/export_site.py` — `report.jsonl` → `docs/report.json`
 - [x] Hook export into `scripts/daily_agent.sh`
-- [x] Separate Groq keys per fetch source + desk + orchestrator
+- [x] Separate Groq keys per stage (orchestrator / scoring / analyst+synthesis / reviewer / fetch picks)
 - [ ] Enable GitHub Pages on remote and verify live URL
 - [ ] Optional: daily git push of updated `docs/report.json`
 - [ ] Surface `title`, `source_count`, and `### Connection` in report UI
