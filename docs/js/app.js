@@ -180,11 +180,6 @@ function parseStory(block, fallbackUrl) {
   };
 }
 
-function splitStories(markdown) {
-  const { body } = extractGlobalCallouts(markdown);
-  return body.split(/(?=^## )/m).filter((p) => p.trim());
-}
-
 function renderSourceLine(story) {
   return `
     <div class="source-line mono">
@@ -262,13 +257,12 @@ function renderEmptyReport() {
 }
 
 function buildReportHTML(data, formattedMarkdown) {
-  const blocks = splitStories(formattedMarkdown);
+  // One pass over the report: strip the global callouts and keep the story body.
+  const { body, whatToWatch, priority, action } =
+    extractGlobalCallouts(formattedMarkdown);
+  const blocks = body.split(/(?=^## )/m).filter((p) => p.trim());
   const urls = data.section_urls || [];
   const stories = blocks.map((block, i) => parseStory(block, urls[i] || ""));
-
-  const { whatToWatch, priority, action } = extractGlobalCallouts(
-    (data.report || "").trim(),
-  );
 
   const themes = (data.themes || [])
     .map((t) => `<span class="theme-tag mono">${escapeHtml(t)}</span>`)
