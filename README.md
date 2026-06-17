@@ -60,7 +60,7 @@ fetch_hn.py         Hacker News curator
 fetch_arxiv.py      arXiv curator
 fetch_github.py     GitHub curator
 prompts/            System prompts for each agent role
-scripts/            daily_agent.sh runner, export_site.py site export, regen_from_items.py (re-run the desk on cached items, no fetch)
+scripts/            daily_agent.sh runner, export_site.py site export
 docs/               Static site (index.html, app.js, report.json, team.json)
 ```
 
@@ -82,8 +82,6 @@ python scripts/export_site.py
 ```
 
 `agent.py` writes the report to `report.jsonl`. `export_site.py` copies the latest report into `docs/report.json`, which the static site reads. Open `docs/index.html` to view the result locally.
-
-When iterating on prompts, `python scripts/regen_from_items.py` re-runs the analyst → reviewer → synthesis steps on the items already in `items.jsonl` (reusing `signals.jsonl`, so no fetch and no re-scoring). It's the fast way to see prompt changes applied to the *same* stories before committing to a full run.
 
 ### Environment
 
