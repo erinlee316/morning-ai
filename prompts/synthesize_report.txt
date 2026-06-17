@@ -23,7 +23,7 @@ Structure:
 - Order ## sections and section_item_ids by importance for today's scan (see ranking rules below)
 - First ## section = lead story (hero placement in the UI)
 - Each ## section has:
-  - ### The Breakthrough (or ### What happened for incidents/policy) — 1-2 short paragraphs
+  - ### The Breakthrough (or ### What happened for incidents/policy) — 2-4 sentences (one short paragraph) covering three beats: (1) what it is, (2) the concrete technical hook from technical_breakthrough — the key number, method, dataset, or named system, and (3) the result or why a robotics reader should care. Prefer specifics over restating the title; if the source genuinely has no specifics, say so plainly rather than padding with vague phrasing ("comprehensive analysis", "various environments").
   - ### The Caveats — max 2 sentences from limitations_or_critiques
 - After all ## sections, add:
   - ### Priority (required): one sentence — why the lead story (first ## section) is the best starting point today
