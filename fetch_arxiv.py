@@ -80,9 +80,9 @@ def entry_authors(entry):
 
 # --- Item shaping ---
 
-def paper_body(entry, categories=None):
+def paper_body(entry):
     """Build a plain-text body from an Atom entry's title, categories, and abstract."""
-    categories = categories or entry_categories(entry)
+    categories = entry_categories(entry)
     title = entry_title(entry)
     abstract = entry_abstract(entry)
     primary_category = (entry.findtext("arxiv:primary_category", default="", namespaces=ATOM_NS) or "").strip()
