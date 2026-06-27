@@ -65,12 +65,23 @@ function formatMastheadDate(iso) {
   return `${day} · ${editionTime(iso)} PT`;
 }
 
+// Launch date (Pacific) that counts as issue No. 1. Each later day is +1, so
+// the counter climbs monotonically and never resets at the year boundary.
+const ISSUE_ONE_DATE = "2026-06-27";
+
 function issueNumber(iso) {
   if (!iso) return "—";
   const date = new Date(iso);
-  const start = new Date(date.getFullYear(), 0, 0);
-  const day = Math.floor((date - start) / 86400000);
-  return String(day).padStart(3, "0");
+  if (Number.isNaN(date.getTime())) return "—";
+  // Compare calendar dates in Pacific time so the number ticks over at PT
+  // midnight regardless of the viewer's own timezone.
+  const editionYmd = date.toLocaleDateString("en-CA", {
+    timeZone: "America/Los_Angeles",
+  });
+  const editionDay = new Date(`${editionYmd}T00:00:00Z`);
+  const launchDay = new Date(`${ISSUE_ONE_DATE}T00:00:00Z`);
+  const issue = Math.floor((editionDay - launchDay) / 86400000) + 1;
+  return issue < 1 ? "—" : String(issue).padStart(3, "0");
 }
 
 /** 24-hour Pacific time when the edition was written (HH:mm). */
