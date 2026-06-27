@@ -35,6 +35,11 @@ REPORT_FILE = "report.jsonl"
 USER_AGENT = "AgenticAI-ResearchBot/1.0 (+https://github.com/erinlee316/morning-ai)"
 MAX_GROQ_BODY_CHARS = 1200   # body chars sent per option at Groq pick time
 
+# Keep a fetch-pick batch under Groq's per-minute token limit (12k free tier). pick_item_ids
+# pre-sizes from char count (dense JSON/markdown ~2.5 chars/token) and 413-retries as a backstop.
+GROQ_PICK_TOKEN_TARGET = 11000     # pre-trim target, with margin under the 12k limit
+GROQ_PICK_CHARS_PER_TOKEN = 2.5    # rough chars/token, only used to pre-size
+
 GROQ_KEY_ORCHESTRATOR = "GROQ_API_KEY1"   # one call per ReAct step — highest call volume
 GROQ_KEY_SCORE = "GROQ_API_KEY2"          # one scoring call per item
 GROQ_KEY_ANALYST = "GROQ_API_KEY3"        # analyst draft per high-signal item
@@ -198,18 +203,45 @@ def pick_item_ids(system_prompt, pick_options, api_key_env):
     pick_options is the dict sent to the model, e.g. {"max_pick": 4, "stories": [...]}.
     Returns selected_ids as strings, or [] if Groq fails (e.g. an exhausted key) so a
     dead key degrades to "skip this source" instead of crashing the whole run.
+
+    A batch too big for the model's per-minute token limit is rejected whole (HTTP 413), losing
+    the source. To avoid that, the option list is pre-trimmed to an estimated token budget, then
+    shrunk one option at a time on any 413 until it fits. These are pick candidates (the model
+    keeps only a few), so dropping the lowest-priority tail barely affects the final selection.
     """
-    try:
-        llm_response = groq_chat([
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": json.dumps(pick_options)},
-        ], api_key_env=api_key_env)
-        parsed = parse_llm_json(llm_response)
-    except (json.JSONDecodeError, RuntimeError, APIError) as err:
-        print(f"  Fetch pick failed ({err}) — skipping this source")
-        return []
-    selected_ids = parsed.get("selected_ids") or []
-    return [str(item_id) for item_id in selected_ids]
+    options = dict(pick_options)
+    # The variable-length payload lives under the one list-valued key (stories/papers/repos).
+    list_key = next((key for key, value in options.items() if isinstance(value, list)), None)
+
+    # Pre-trim by estimate so the first send usually fits; the 413 retry below is the guarantee.
+    if list_key:
+        while len(options[list_key]) > 1:
+            est_tokens = (len(system_prompt) + len(json.dumps(options))) / GROQ_PICK_CHARS_PER_TOKEN
+            if est_tokens <= GROQ_PICK_TOKEN_TARGET:
+                break
+            options[list_key] = options[list_key][:-1]
+
+    while True:
+        try:
+            llm_response = groq_chat([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(options)},
+            ], api_key_env=api_key_env)
+            parsed = parse_llm_json(llm_response)
+        except (json.JSONDecodeError, RuntimeError) as err:
+            print(f"  Fetch pick failed ({err}) — skipping this source")
+            return []
+        except APIError as err:
+            too_large = getattr(err, "status_code", None) == 413 or "request too large" in str(err).lower()
+            if too_large and list_key and len(options.get(list_key) or []) > 1:
+                options[list_key] = options[list_key][:-1]
+                print(f"  Pick request too large — retrying with {len(options[list_key])} options")
+                continue
+            print(f"  Fetch pick failed ({err}) — skipping this source")
+            return []
+
+        selected_ids = parsed.get("selected_ids") or []
+        return [str(item_id) for item_id in selected_ids]
 
 
 
