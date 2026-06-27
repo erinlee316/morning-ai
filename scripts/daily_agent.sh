@@ -1,10 +1,14 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # Morning research agent — logs to logs/agent.log
+# Run from anywhere: ./scripts/daily_agent.sh
+# Override the interpreter if needed: PYTHON=/path/to/python ./scripts/daily_agent.sh
 
 set -euo pipefail
 
-PROJECT="/Users/erinlee/agentic_ai"
-PYTHON="/opt/anaconda3/bin/python"
+# Resolve the project root from this script's location, so it works on any machine.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT="$(dirname "$SCRIPT_DIR")"
+PYTHON="${PYTHON:-python3}"
 LOG_DIR="$PROJECT/logs"
 
 mkdir -p "$LOG_DIR"
