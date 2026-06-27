@@ -60,8 +60,9 @@ function formatMastheadDate(iso) {
     month: "long",
     day: "numeric",
     year: "numeric",
+    timeZone: "America/Los_Angeles",
   });
-  return `${day} · ${editionTime(iso)}`;
+  return `${day} · ${editionTime(iso)} PT`;
 }
 
 function issueNumber(iso) {
@@ -72,15 +73,18 @@ function issueNumber(iso) {
   return String(day).padStart(3, "0");
 }
 
-/** 24-hour local time when the edition was written (HH:mm). */
+/** 24-hour Pacific time when the edition was written (HH:mm). */
 function editionTime(iso) {
   if (!iso) return "—";
   try {
     const date = new Date(iso);
     if (Number.isNaN(date.getTime())) return "—";
-    const h = String(date.getHours()).padStart(2, "0");
-    const m = String(date.getMinutes()).padStart(2, "0");
-    return `${h}:${m}`;
+    return date.toLocaleTimeString("en-GB", {
+      timeZone: "America/Los_Angeles",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
   } catch {
     return "—";
   }
@@ -354,7 +358,24 @@ function renderPersonCard(person) {
     </div>`;
 }
 
-function renderAgentCard(agent, isBoss) {
+/** "HH:mm PT" for an agent's run timestamp; "" when missing or unparseable. */
+function formatRunTime(iso) {
+  if (!iso) return "";
+  const when = new Date(iso);
+  if (isNaN(when.getTime())) return "";
+  const time = when.toLocaleTimeString("en-GB", {
+    timeZone: "America/Los_Angeles",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return `${time} PT`;
+}
+
+function renderAgentCard(agent, isBoss, runTimes) {
+  // Prefer today's actual run time (from report.json); fall back to the static schedule in team.json.
+  const runTime =
+    (runTimes && agent.id && formatRunTime(runTimes[agent.id])) || agent.schedule || "";
   const bossBadge = isBoss
     ? `<span class="card-badge card-badge--boss mono">★ Boss</span>`
     : "";
@@ -390,8 +411,8 @@ function renderAgentCard(agent, isBoss) {
             <dd>${escapeHtml(agent.model || "")}</dd>
           </div>
           <div>
-            <dt>Runs</dt>
-            <dd>${escapeHtml(agent.schedule || "")}</dd>
+            <dt>Last run</dt>
+            <dd>${escapeHtml(runTime)}</dd>
           </div>
           ${agent.note || agent.badge === "local only" ? `<div><dt>Note</dt><dd>${escapeHtml(agent.note || agent.badge)}</dd></div>` : ""}
         </dl>
@@ -409,22 +430,33 @@ async function loadTeam() {
       return;
     }
     const team = await res.json();
+
+    // Pull per-agent run times from the latest report so cards show when each agent last ran.
+    // Best-effort: if report.json is missing/unreadable, cards fall back to their static schedule.
+    let runTimes = {};
+    try {
+      const reportRes = await fetch(`report.json?t=${Date.now()}`, { cache: "no-store" });
+      if (reportRes.ok) runTimes = (await reportRes.json()).run_times || {};
+    } catch {
+      runTimes = {};
+    }
+
     panel.innerHTML = `
       <div class="team-view">
         <div class="team-intro">
           <div class="team-section-label mono">Section B · The Newsroom</div>
           <h2 class="display">Who Made This Paper</h2>
-          <p>One human, one boss agent, four reporters. They wake up at 8 AM, file the briefing, then go back to sleep.</p>
+          <p>One human, one boss agent, four reporters. They wake up at 6 AM, file the briefing, then go back to sleep.</p>
         </div>
         <div class="team-center">${renderPersonCard(team.human)}</div>
         <div class="org-line"><div class="org-line-v"></div></div>
-        <div class="team-center">${renderAgentCard(team.leader, true)}</div>
+        <div class="team-center">${renderAgentCard(team.leader, true, runTimes)}</div>
         <div class="org-line">
           <div class="org-line-v"></div>
           <div class="org-line-h"></div>
         </div>
         <div class="team-grid">
-          ${team.reports.map((a) => renderAgentCard(a, false)).join("")}
+          ${team.reports.map((a) => renderAgentCard(a, false, runTimes)).join("")}
         </div>
       </div>`;
   } catch {
