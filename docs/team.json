@@ -14,7 +14,7 @@
     "model": "Groq · llama-3.3-70b",
     "key": "GROQ_API_KEY1",
     "module": "agent.py",
-    "schedule": "08:00 daily",
+    "schedule": "Daily at dawn",
     "bio": "Managing editor. Wakes up, sends the curators out at dawn, hands their items to the Research Desk, and doesn't clock out until today's edition is live.",
     "portrait_bg": "#d8cbc4",
     "image": "assets/team/boss.png"
@@ -27,7 +27,7 @@
       "module": "fetch_hn.py",
       "model": "Groq · llama-3.3-70b",
       "key": "GROQ_API_KEY5",
-      "schedule": "08:01 daily",
+      "schedule": "Daily at dawn",
       "bio": "Speed-run journalist. Hits top and new before the comments section writes the story for you. If it's not about robots, agents, or someone shipping something real, it doesn't make the cut.",
       "portrait_bg": "#f5c77e",
       "image": "assets/team/hn.png"
@@ -39,7 +39,7 @@
       "module": "fetch_arxiv.py",
       "model": "Groq · llama-3.3-70b",
       "key": "GROQ_API_KEY5",
-      "schedule": "08:01 daily",
+      "schedule": "Daily at dawn",
       "bio": "Science desk, not hype desk. Pulls today's arXiv batch, sorts manipulation and locomotion first, and will happily reject a trendy LLM paper with no hardware in sight.",
       "portrait_bg": "#78866b",
       "image": "assets/team/arxiv.png"
@@ -51,7 +51,7 @@
       "module": "fetch_github.py",
       "model": "Groq · llama-3.3-70b",
       "key": "GROQ_API_KEY5",
-      "schedule": "08:01 daily",
+      "schedule": "Daily at dawn",
       "bio": "Repo scout. Hunts what's trending in robotics and agents, actually reads the README, and files anything you'd `git clone` before standup — or regret not cloning.",
       "portrait_bg": "#7992a8",
       "image": "assets/team/github.png"
@@ -63,15 +63,31 @@
       "module": "tools.py",
       "model": "Groq · llama-3.3-70b (4 sub-roles)",
       "key": "GROQ_API_KEY2–4",
-      "schedule": "08:02 daily",
+      "schedule": "Daily at dawn",
       "bio": "The copy desk. One agent scores the noise, two argue over the summary, and the editor staples it into something you'd actually read before your second coffee.",
       "portrait_bg": "#836953",
       "image": "assets/team/research.png",
       "sub_agents": [
-        { "name": "Signal Scorer", "tool": "score_signal", "model": "Groq" },
-        { "name": "Analyst", "tool": "summarize_item", "model": "Groq" },
-        { "name": "Reviewer", "tool": "summarize_item", "model": "Groq" },
-        { "name": "Editor", "tool": "synthesize_report", "model": "Groq" }
+        {
+          "name": "Signal Scorer",
+          "tool": "score_signal",
+          "model": "Groq"
+        },
+        {
+          "name": "Analyst",
+          "tool": "summarize_item",
+          "model": "Groq"
+        },
+        {
+          "name": "Reviewer",
+          "tool": "summarize_item",
+          "model": "Groq"
+        },
+        {
+          "name": "Editor",
+          "tool": "synthesize_report",
+          "model": "Groq"
+        }
       ]
     }
   ]
