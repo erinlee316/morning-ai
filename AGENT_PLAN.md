@@ -23,14 +23,14 @@ Keep the pipeline **simple**: score noise, summarize everything high-signal, pro
 
 One useful morning report built from **many sources**, not one feed:
 
-| Source | Status |
-|--------|--------|
-| Hacker News | ✅ `fetch_hn.py` |
-| arXiv (cs.RO, cs.CV, cs.AI, cs.LG, cs.CL, cs.SY, cs.MA) | ✅ `fetch_arxiv.py` |
-| GitHub trending repos | ✅ `fetch_github.py` |
-| Newsletters (Gmail) | Removed — may return later |
-| AI subreddits | Planned |
-| X/Twitter lists, company blogs | Later |
+| Source | Module | Status |
+|--------|--------|--------|
+| Hacker News | `fetch_hn.py` | Live |
+| arXiv (cs.RO, cs.CV, cs.AI, cs.LG, cs.CL, cs.SY, cs.MA) | `fetch_arxiv.py` | Live |
+| GitHub repo search | `fetch_github.py` | Live |
+| Newsletters (Gmail) | — | Removed, may return later |
+| AI subreddits | — | Possible later |
+| X/Twitter lists, company blogs | — | Possible later |
 
 The agent **filters noise**, summarizes high-signal items with links, and keeps the daily read scannable. Optional later: dedup, GitHub releases feed, report history.
 
@@ -71,7 +71,10 @@ run_tool dispatches to tools.py:
 
 scripts/export_site.py → docs/report.json (last report row, public-safe fields)
 
-launchd (8:00 AM) → scripts/daily_agent.sh → agent.py → export_site.py
+GitHub Actions (daily-report.yml, cron 13:00 UTC = 6 AM Pacific):
+  agent.py → export_site.py → commit docs/report.json + *.jsonl → push
+GitHub Actions (pages.yml): on push to main → deploy docs/ to GitHub Pages
+(local alt: scripts/daily_agent.sh via launchd → agent.py → export_site.py)
 ```
 
 **Two layers of LLM reasoning**
@@ -214,7 +217,7 @@ Standalone: `python fetch_hn.py` (or arxiv/github modules) can write `items.json
 - [x] ReAct loop with progress block + phase guards
 - [x] Robotics / embodied AI focus in fetch and synthesis prompts
 - [x] `content_filters.py` — marketing filter + desk output validation
-- [x] Daily schedule — `scripts/daily_agent.sh` + launchd plist
+- [x] Daily schedule — GitHub Actions cron (`daily-report.yml`, 6 AM Pacific); `scripts/daily_agent.sh` + launchd plist as the local alternative
 - [x] Prompts externalized under `prompts/`
 - [x] Gmail pipeline removed
 - [x] GitHub Pages static UI — `docs/` + `scripts/export_site.py` (see [`UI_PLAN.md`](UI_PLAN.md))
@@ -249,20 +252,20 @@ Standalone: `python fetch_hn.py` (or arxiv/github modules) can write `items.json
 **Split producer and consumer (shipped):**
 
 ```text
-[Private]  Mac launchd 8:00 AM          [Public]  GitHub Pages
-           agent.py + .env secrets           docs/ static site
-           Groq API keys                       reads docs/report.json
+[CI]  GitHub Actions (daily-report.yml, 6 AM PT)   [Public]  GitHub Pages
+      agent.py + export_site.py                              docs/ static site
+      Groq keys from repo secrets                            reads docs/report.json
                     │
-                    └── export_site.py → docs/report.json
+                    └── commit docs/report.json + *.jsonl → push → pages.yml deploys
 ```
 
 | Piece | Where it runs | Public? |
 |-------|---------------|---------|
-| Agent (`agent.py`) | Mac (launchd) | No — needs secrets |
-| Groq | API keys in `.env` | Keys never exposed to readers |
+| Agent (`agent.py`) | GitHub Actions (or Mac launchd locally) | No — needs secrets |
+| Groq | API keys in repo secrets (`.env` locally) | Keys never exposed to readers |
 | Report UI | GitHub Pages (`docs/`) or `python -m http.server 8080 --directory docs` | Yes — finished report only |
 
-**Still manual:** git commit + push of `docs/report.json` after daily run.
+**Fully automated:** `daily-report.yml` commits and pushes `docs/report.json` + state each morning; `pages.yml` redeploys the site on that push.
 
 **Notes:**
 
