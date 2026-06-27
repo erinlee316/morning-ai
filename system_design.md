@@ -1,8 +1,9 @@
 # The Morning AI — System Design
 
-An autonomous daily research briefing pipeline. Every morning it scans Hacker News,
-arXiv, and GitHub, uses Groq-hosted LLM agents to score, summarize, and synthesize
-the best robotics / embodied-AI items, and publishes a single briefing to GitHub Pages.
+The Morning AI is a daily research briefing that runs on its own. Each morning it scans
+Hacker News, arXiv, and GitHub, then a set of Groq-hosted language-model agents score the
+candidates, summarize the ones worth keeping, and synthesize them into a single robotics
+and embodied-AI briefing that gets published to a GitHub Pages site.
 
 ## Architecture
 
