@@ -437,7 +437,10 @@ body {
   }
 }
 
-/* Equal rectangle size for all four reporter cards */
+/* Base size for the four reporter cards. This is just a comfortable floor for
+   short-bio cards — it is NOT what guarantees footer spacing. A long bio may
+   push a card past this height; the bio->footer gap stays polite regardless
+   because .card-dl carries a fixed minimum buffer (see its margin-top below). */
 .team-grid .agent-card {
   min-height: 24rem;
   height: 100%;
@@ -580,8 +583,12 @@ body {
 }
 
 .card-dl {
-  margin: 0.75rem 0 0;
-  padding-top: 0.75rem;
+  /* Guaranteed buffer above the footer. When a card has spare height the bio's
+     flex pushes the footer further down; when it doesn't (a long bio fills the
+     card), this 1.25rem + 0.85rem = ~2.1rem is the floor, so the rule never
+     jams against the bio. Editing any bio stays safe without re-tuning sizes. */
+  margin: 1.25rem 0 0;
+  padding-top: 0.85rem;
   border-top: 1px solid var(--rule);
   font-size: 0.625rem;
   text-transform: uppercase;
