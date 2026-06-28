@@ -4,7 +4,7 @@ A daily, autonomous research briefing on robotics and AI. Every morning a small 
 
 > "Robotics news, papers, and repos, picked so you don't have to live in 20 tabs."
 
-**Live site:** [erinlee316.github.io/morning-ai](https://erinlee316.github.io/morning-ai/) · **Architecture:** [system_design.md](system_design.md)
+**Live site:** [erinflee.github.io/morning-ai](https://erinflee.github.io/morning-ai/) · **Architecture:** [system_design.md](system_design.md)
 
 ## Why I built it
 
